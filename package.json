@@ -1,6 +1,7 @@
 {
   "name": "com.ruwvan.lore-for-unity",
   "version": "0.1.0",
+  "unity": "2022.3",
   "displayName": "Lore for Unity",
   "description": "Editor integration for using Lore safely with Unity's asset model and workflows.",
   "keywords": [
