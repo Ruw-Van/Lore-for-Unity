@@ -40,6 +40,7 @@ namespace Lore.Unity.Infrastructure.Runtime
         public static Result<ValidatedRuntimeManifest> Validate(RuntimeManifest manifest)
         {
             if (manifest == null || string.IsNullOrWhiteSpace(manifest.loreVersion) ||
+                !SafeSegment(manifest.loreVersion) ||
                 manifest.artifacts == null || manifest.artifacts.Count == 0)
                 return Invalid("A version and at least one artifact are required.");
 
@@ -49,7 +50,7 @@ namespace Lore.Unity.Infrastructure.Runtime
             {
                 if (entry == null || (entry.platform != "Windows-x64" && entry.platform != "macOS-arm64") ||
                     !platforms.Add(entry.platform) || !IsSha256(entry.sha256) || entry.downloadSize <= 0 ||
-                    string.IsNullOrWhiteSpace(entry.artifactFormat) ||
+                    !SafeSegment(entry.artifactFormat) ||
                     !Uri.TryCreate(entry.officialArtifactUrl, UriKind.Absolute, out var url) ||
                     url.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(url.UserInfo) ||
                     !string.IsNullOrEmpty(url.Fragment))
@@ -68,6 +69,15 @@ namespace Lore.Unity.Infrastructure.Runtime
             foreach (var c in value)
                 if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
                     return false;
+            return true;
+        }
+
+        private static bool SafeSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value == "." || value == "..") return false;
+            foreach (var c in value)
+                if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                      (c >= '0' && c <= '9') || c == '.' || c == '-' || c == '_')) return false;
             return true;
         }
 

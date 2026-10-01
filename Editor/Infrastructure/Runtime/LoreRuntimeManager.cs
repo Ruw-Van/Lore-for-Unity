@@ -9,15 +9,30 @@ using Lore.Unity.Core.Results;
 
 namespace Lore.Unity.Infrastructure.Runtime
 {
-    // Read-only foundation. Installation needs a verified official artifact and a safe extractor/probe.
-    // No filesystem mutation, PATH lookup, or network access occurs here.
+    // No PATH lookup or automatic installation. Installer/probe are supplied only after the
+    // expected Lore archive format, files and version probe are confirmed.
     public sealed class LoreRuntimeManager
     {
         private readonly ValidatedRuntimeManifest _manifest;
+        private readonly RuntimeLayout _layout;
+        private readonly IRuntimeLockManager _locks;
+        private readonly IRuntimeInstaller _installer;
+        private readonly IRuntimeProbe _probe;
+        private readonly IRuntimeRegistry _registry;
 
         public LoreRuntimeManager(ValidatedRuntimeManifest manifest)
+            : this(manifest, null, null, null, null, null) { }
+
+        public LoreRuntimeManager(ValidatedRuntimeManifest manifest, RuntimeLayout layout,
+            IRuntimeLockManager locks, IRuntimeInstaller installer, IRuntimeProbe probe,
+            IRuntimeRegistry registry)
         {
             _manifest = manifest ?? throw new ArgumentNullException(nameof(manifest));
+            _layout = layout;
+            _locks = locks;
+            _installer = installer;
+            _probe = probe;
+            _registry = registry;
         }
 
         public Result<ValidatedRuntimeArtifact> FindArtifact(string platform)
@@ -57,6 +72,70 @@ namespace Lore.Unity.Infrastructure.Runtime
             catch (OperationCanceledException) { throw; }
             catch (IOException) { return Failure(ErrorCode.RuntimeMissing, "Artifact cannot be read."); }
             catch (UnauthorizedAccessException) { return Failure(ErrorCode.RuntimeMissing, "Artifact cannot be read."); }
+        }
+
+        public Task<Result> VerifyInstalledAsync(string platform, CancellationToken cancellationToken)
+        {
+            var choice = FindArtifact(platform);
+            if (choice.IsFailure) return Task.FromResult(Result.Failure(choice.Error));
+            if (_probe == null || _layout == null)
+                return Task.FromResult(Failure(ErrorCode.RuntimeMissing, "Runtime probe is not configured."));
+            return _probe.VerifyInstalledAsync(_layout.Installation(_manifest.LoreVersion, platform),
+                _manifest.LoreVersion, platform, cancellationToken);
+        }
+
+        public Result RecordProject(RuntimeProjectRecord project)
+        {
+            if (project == null) throw new ArgumentNullException(nameof(project));
+            if (!_manifest.LoreVersion.Equals(project.RequiredLoreVersion))
+                return Failure(ErrorCode.VersionMismatch, "Project requires a different Lore version.");
+            if (_registry == null || _locks == null)
+                return Failure(ErrorCode.UnsupportedOperation, "Runtime registry is not configured.");
+            using (var lease = _locks.TryAcquire())
+            {
+                if (lease == null) return Failure(ErrorCode.Locked, "Runtime cache is in use.");
+                try { _registry.Record(project); return Result.Success(); }
+                catch (IOException) { return Failure(ErrorCode.ValidationFailed, "Runtime registry cannot be written."); }
+                catch (UnauthorizedAccessException) { return Failure(ErrorCode.ValidationFailed, "Runtime registry cannot be written."); }
+            }
+        }
+
+        // Explicit offline install only. A private copy is verified under a cross-process lease;
+        // the installer owns archive validation, temporary extraction and atomic publication.
+        public async Task<Result> InstallFromFileAsync(AbsolutePath file, string platform,
+            CancellationToken cancellationToken)
+        {
+            var choice = FindArtifact(platform);
+            if (choice.IsFailure) return Result.Failure(choice.Error);
+            if (_installer == null || _probe == null || _layout == null || _locks == null)
+                return Failure(ErrorCode.UnsupportedOperation, "Runtime installation is not configured.");
+            using (var lease = _locks.TryAcquire())
+            {
+                if (lease == null) return Failure(ErrorCode.Locked, "Runtime cache is in use.");
+                cancellationToken.ThrowIfCancellationRequested();
+                var destination = _layout.Installation(_manifest.LoreVersion, platform);
+                if (Directory.Exists(destination.Value))
+                    return Failure(ErrorCode.ValidationFailed, "Runtime already exists; verify or repair it explicitly.");
+                var staging = Path.Combine(_layout.Root.Value, ".artifact-" + Guid.NewGuid().ToString("N"));
+                try
+                {
+                    using (var source = new FileStream(file.Value, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    using (var target = new FileStream(staging, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                        await source.CopyToAsync(target, 81920, cancellationToken);
+
+                    var privateFile = new AbsolutePath(staging);
+                    var verified = await VerifyArtifactAsync(privateFile, choice.Value, cancellationToken);
+                    if (verified.IsFailure) return verified;
+                    var installed = await _installer.InstallAsync(privateFile, destination, choice.Value,
+                        _manifest.LoreVersion, cancellationToken);
+                    if (installed.IsFailure) return installed;
+                    return await _probe.VerifyInstalledAsync(destination, _manifest.LoreVersion, platform, cancellationToken);
+                }
+                catch (OperationCanceledException) { throw; }
+                catch (IOException) { return Failure(ErrorCode.RuntimeMissing, "Artifact cannot be staged."); }
+                catch (UnauthorizedAccessException) { return Failure(ErrorCode.RuntimeMissing, "Artifact cannot be staged."); }
+                finally { if (File.Exists(staging)) File.Delete(staging); }
+            }
         }
 
         private static Result Failure(ErrorCode code, string message) => Result.Failure(new LoreError(code, message));

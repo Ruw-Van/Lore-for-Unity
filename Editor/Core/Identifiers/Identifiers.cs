@@ -5,6 +5,12 @@ namespace Lore.Unity.Core.Identifiers
         public RepositoryId(string value) : base(value, nameof(value)) { }
     }
 
+    // Runtime registry identity is separate from Lore's repository identity.
+    public sealed class ProjectId : StringIdentifier
+    {
+        public ProjectId(string value) : base(value, nameof(value)) { }
+    }
+
     public sealed class BranchId : StringIdentifier
     {
         public BranchId(string value) : base(value, nameof(value)) { }
