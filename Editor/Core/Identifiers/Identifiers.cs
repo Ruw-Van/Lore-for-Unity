@@ -20,7 +20,7 @@ namespace Lore.Unity.Core.Identifiers
         public RevisionSignature(string value) : base(value, nameof(value)) { }
     }
 
-    public readonly struct RevisionNumber
+    public readonly struct RevisionNumber : System.IEquatable<RevisionNumber>
     {
         public RevisionNumber(long value)
         {
@@ -33,6 +33,12 @@ namespace Lore.Unity.Core.Identifiers
         }
 
         public long Value { get; }
+
+        public bool Equals(RevisionNumber other) => Value == other.Value;
+
+        public override bool Equals(object obj) => obj is RevisionNumber other && Equals(other);
+
+        public override int GetHashCode() => Value.GetHashCode();
 
         public override string ToString()
         {

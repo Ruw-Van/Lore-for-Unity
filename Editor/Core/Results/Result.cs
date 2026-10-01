@@ -8,14 +8,16 @@ namespace Lore.Unity.Core.Results
         private Result(bool isSuccess, LoreError error)
         {
             IsSuccess = isSuccess;
-            Error = error;
+            _error = error;
         }
 
         public bool IsSuccess { get; }
 
         public bool IsFailure => !IsSuccess;
 
-        public LoreError Error { get; }
+        private readonly LoreError _error;
+
+        public LoreError Error => IsFailure ? _error ?? new LoreError(ErrorCode.Unknown, "Uninitialized result.") : null;
 
         public static Result Success()
         {
@@ -41,21 +43,23 @@ namespace Lore.Unity.Core.Results
         {
             IsSuccess = true;
             _value = value;
-            Error = null;
+            _error = null;
         }
 
         private Result(LoreError error)
         {
             IsSuccess = false;
             _value = default;
-            Error = error;
+            _error = error;
         }
 
         public bool IsSuccess { get; }
 
         public bool IsFailure => !IsSuccess;
 
-        public LoreError Error { get; }
+        private readonly LoreError _error;
+
+        public LoreError Error => IsFailure ? _error ?? new LoreError(ErrorCode.Unknown, "Uninitialized result.") : null;
 
         public T Value
         {
