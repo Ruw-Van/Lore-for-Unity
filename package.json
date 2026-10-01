@@ -1,0 +1,15 @@
+{
+  "name": "com.ruwvan.lore-for-unity",
+  "version": "0.1.0",
+  "displayName": "Lore for Unity",
+  "description": "Editor integration for using Lore safely with Unity's asset model and workflows.",
+  "keywords": [
+    "lore",
+    "version-control",
+    "editor"
+  ],
+  "author": {
+    "name": "Ruw-Van"
+  },
+  "license": "MIT"
+}
