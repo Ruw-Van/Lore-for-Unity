@@ -36,14 +36,16 @@ namespace Lore.Unity.Application.Backend
 
     public sealed class FileStatusEntry
     {
-        public FileStatusEntry(RepositoryPath path, FileStatus status)
+        public FileStatusEntry(RepositoryPath path, FileStatus status, RepositoryPath? sourcePath = null)
         {
             if (string.IsNullOrEmpty(path.Value)) throw new System.ArgumentException("A path is required.", nameof(path));
             Path = path;
             Status = status;
+            SourcePath = sourcePath;
         }
         public RepositoryPath Path { get; }
         public FileStatus Status { get; }
+        public RepositoryPath? SourcePath { get; }
     }
 
     public interface IStatusBackend

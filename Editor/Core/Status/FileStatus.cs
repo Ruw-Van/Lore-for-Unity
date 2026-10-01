@@ -7,7 +7,8 @@ namespace Lore.Unity.Core.Status
         Modified,
         Deleted,
         Moved,
-        Untracked
+        Untracked,
+        Copied
     }
 
     public enum StageState

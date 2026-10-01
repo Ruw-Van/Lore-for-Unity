@@ -18,25 +18,28 @@ namespace Lore.Unity.Infrastructure.LoreCli
     {
         private readonly LoreCliRunner _runner;
         private readonly CliStatusParser _parser;
+        private readonly IRepositoryOperationGate _gate;
         private readonly ConcurrentDictionary<RepositoryId, AbsolutePath> _roots =
             new ConcurrentDictionary<RepositoryId, AbsolutePath>();
 
-        public CliReadAdapter(LoreCliRunner runner, CliStatusParser parser)
+        public CliReadAdapter(LoreCliRunner runner, CliStatusParser parser, IRepositoryOperationGate gate)
         {
             _runner = runner ?? throw new ArgumentNullException(nameof(runner));
             _parser = parser ?? throw new ArgumentNullException(nameof(parser));
+            _gate = gate ?? throw new ArgumentNullException(nameof(gate));
         }
 
         public async Task<Result<RepositorySnapshot>> DetectAsync(AbsolutePath root, CancellationToken token)
         {
-            var output = await _runner.RunAsync(root, new[] { "--offline", "status", "--revision-only" }, token);
+            var output = await _runner.RunAsync(root, new[] { "--json", "--offline", "status", "--revision-only" }, token);
             if (output.IsFailure) return Result<RepositorySnapshot>.Failure(output.Error);
             if (output.Value.ExitCode != 0)
                 return Result<RepositorySnapshot>.Failure(new LoreError(ErrorCode.InvalidRepository,
                     "Lore CLI could not read the repository."));
-            var parsed = _parser.ParseRepository(root, output.Value.StandardOutput);
-            if (parsed.IsSuccess) _roots[parsed.Value.Id] = parsed.Value.Root;
-            return parsed;
+            var parsed = _parser.Parse(root, output.Value.StandardOutput);
+            if (parsed.IsFailure) return Result<RepositorySnapshot>.Failure(parsed.Error);
+            _roots[parsed.Value.Repository.Id] = parsed.Value.Repository.Root;
+            return Result<RepositorySnapshot>.Success(parsed.Value.Repository);
         }
 
         public async Task<Result<IReadOnlyList<FileStatusEntry>>> ReadAsync(RepositoryId repository,
@@ -46,7 +49,7 @@ namespace Lore.Unity.Infrastructure.LoreCli
             if (paths == null) throw new ArgumentNullException(nameof(paths));
             if (!_roots.TryGetValue(repository, out var root))
                 return Failure("Repository has not been verified in this session.");
-            var args = new List<string> { "--offline", "status" };
+            var args = new List<string> { "--json", "--offline", "status", "--scan" };
             if (paths.Count > 0)
             {
                 args.Add("--");
@@ -56,12 +59,16 @@ namespace Lore.Unity.Infrastructure.LoreCli
                     args.Add(path.Value);
                 }
             }
-            var output = await _runner.RunAsync(root, args, token);
-            if (output.IsFailure) return Result<IReadOnlyList<FileStatusEntry>>.Failure(output.Error);
-            if (output.Value.ExitCode != 0) return Failure("Lore CLI status failed.");
-            var identity = _parser.ParseRepository(root, output.Value.StandardOutput);
-            if (identity.IsFailure || !identity.Value.Id.Equals(repository)) return Failure("Lore repository changed.");
-            return _parser.ParseFiles(output.Value.StandardOutput);
+            using (await _gate.AcquireAsync(repository, token))
+            {
+                var output = await _runner.RunAsync(root, args, token);
+                if (output.IsFailure) return Result<IReadOnlyList<FileStatusEntry>>.Failure(output.Error);
+                if (output.Value.ExitCode != 0) return Failure("Lore CLI status failed.");
+                var parsed = _parser.Parse(root, output.Value.StandardOutput);
+                if (parsed.IsFailure) return Result<IReadOnlyList<FileStatusEntry>>.Failure(parsed.Error);
+                if (!parsed.Value.Repository.Id.Equals(repository)) return Failure("Lore repository changed.");
+                return Result<IReadOnlyList<FileStatusEntry>>.Success(parsed.Value.Files);
+            }
         }
 
         private static Result<IReadOnlyList<FileStatusEntry>> Failure(string message) =>

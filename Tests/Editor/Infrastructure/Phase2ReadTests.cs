@@ -21,6 +21,7 @@ namespace Lore.Unity.Tests.Infrastructure
     {
         private sealed class Bridge : ILoreSdkReadBridge
         {
+            public bool IsAvailable => true;
             public SdkRepositoryData Repository;
             public IReadOnlyList<SdkFileData> Files;
             public Task<Result<SdkRepositoryData>> ReadRepositoryAsync(AbsolutePath root, CancellationToken token) =>
@@ -114,29 +115,62 @@ namespace Lore.Unity.Tests.Infrastructure
         }
 
         [Test]
-        public void CliParserReadsDocumentedSimpleStatusWithoutInventingLockState()
+        public void CliParserReadsStructuredStatusWithoutInventingLockState()
         {
-            var text = "Repository " + new string('a', 32) + "\nOn branch main revision 1 -> " +
-                new string('b', 64) + "\nChanges not staged for commit:\nM Assets/Scene.unity\n" +
-                "Untracked files:\nA Assets/new.prefab\n";
+            var text = RevisionJson() + "\n" +
+                "{\"tagName\":\"repositoryStatusFile\",\"data\":{\"path\":\"Assets/Scene.unity\",\"action\":\"keep\",\"flagDirty\":true,\"flagStaged\":false,\"flagConflict\":false,\"flagConflictUnresolved\":false}}\n" +
+                "{\"tagName\":\"repositoryStatusFile\",\"data\":{\"path\":\"Assets/new.prefab\",\"action\":\"add\",\"flagDirty\":true,\"flagStaged\":false,\"flagConflict\":false,\"flagConflictUnresolved\":false}}\n" +
+                "{\"tagName\":\"complete\",\"data\":{\"status\":0}}\n";
             var parser = new CliStatusParser();
             var root = new AbsolutePath(Path.GetTempPath());
-            Assert.That(parser.ParseRepository(root, text).Value.Id.Value, Is.EqualTo(new string('a', 32)));
-            var files = parser.ParseFiles(text).Value;
+            var parsed = parser.Parse(root, text).Value;
+            Assert.That(parsed.Repository.Id.Value, Is.EqualTo(new string('a', 32)));
+            var files = parsed.Files;
             Assert.That(files.Count, Is.EqualTo(2));
             Assert.That(files[0].Status.Lock, Is.EqualTo(Lore.Unity.Core.Status.LockState.Unknown));
             Assert.That(files[1].Status.Working, Is.EqualTo(Lore.Unity.Core.Status.WorkingState.Untracked));
         }
 
         [Test]
-        public void CliParserRejectsAmbiguousStagedAndUnrecognizedOutput()
+        public void CliParserRejectsAmbiguousOrIncompleteStreams()
         {
-            var header = "Repository " + new string('a', 32) + "\nOn branch main revision 1 -> " +
-                new string('b', 64) + "\n";
             var parser = new CliStatusParser();
-            Assert.That(parser.ParseFiles(header + "Changes staged for commit:\nA Assets/x.prefab\n").IsFailure, Is.True);
-            Assert.That(parser.ParseFiles(header + "Changes not staged for commit:\nM ../outside\n").IsFailure, Is.True);
-            Assert.That(parser.ParseFiles(header + "New output format\n").IsFailure, Is.True);
+            var root = new AbsolutePath(Path.GetTempPath());
+            Assert.That(parser.Parse(root, RevisionJson()).IsFailure, Is.True);
+            Assert.That(parser.Parse(root, RevisionJson() + "\n{\"tagName\":\"newStatusEvent\",\"data\":{}}\n" + CompleteJson()).IsFailure, Is.True);
+            Assert.That(parser.Parse(root, RevisionJson() + "\n{\"tagName\":\"repositoryStatusFile\",\"data\":{\"path\":\"../outside\",\"action\":\"add\",\"flagDirty\":true,\"flagStaged\":false,\"flagConflict\":false,\"flagConflictUnresolved\":false}}\n" + CompleteJson()).IsFailure, Is.True);
+            Assert.That(parser.Parse(root, RevisionJson() + "\n{\"tagName\":\"complete\",\"data\":{\"status\":4}}\n").IsFailure, Is.True);
+            Assert.That(parser.Parse(root, RevisionJson() + "\n{\"tagName\":\"repositoryStatusFile\",\"data\":{\"path\":\"Assets/a\",\"action\":\"copy\",\"flagDirty\":true,\"flagStaged\":true,\"flagConflict\":false,\"flagConflictUnresolved\":false}}\n" + CompleteJson()).IsFailure, Is.True);
         }
+
+        [Test]
+        public void CliParserRetainsMoveSourcePath()
+        {
+            var text = RevisionJson() + "\n{\"tagName\":\"repositoryStatusFile\",\"data\":{\"path\":\"Assets/new.prefab\",\"fromPath\":\"Assets/old.prefab\",\"action\":\"move\",\"flagDirty\":false,\"flagStaged\":true,\"flagConflict\":false,\"flagConflictUnresolved\":false}}\n" + CompleteJson();
+            var parsed = new CliStatusParser().Parse(new AbsolutePath(Path.GetTempPath()), text);
+            Assert.That(parsed.Value.Files[0].Status.Working,
+                Is.EqualTo(Lore.Unity.Core.Status.WorkingState.Moved));
+            Assert.That(parsed.Value.Files[0].SourcePath.Value.Value, Is.EqualTo("Assets/old.prefab"));
+        }
+
+        [Test]
+        public void ScanGateSerializesWithinRepository()
+        {
+            var gate = new RepositoryOperationGate();
+            var id = new RepositoryId("repo");
+            Task<IDisposable> waiter;
+            using (gate.AcquireAsync(id, CancellationToken.None).GetAwaiter().GetResult())
+            {
+                waiter = gate.AcquireAsync(new RepositoryId("repo"), CancellationToken.None);
+                Assert.That(waiter.IsCompleted, Is.False);
+            }
+            using (waiter.GetAwaiter().GetResult()) { }
+            using (gate.AcquireAsync(id, CancellationToken.None).GetAwaiter().GetResult()) { }
+        }
+
+        private static string RevisionJson() => "{\"tagName\":\"repositoryStatusRevision\",\"data\":{\"repository\":\"" +
+            new string('a', 32) + "\",\"branchName\":\"main\",\"revision\":\"" + new string('b', 64) + "\"}}";
+
+        private static string CompleteJson() => "{\"tagName\":\"complete\",\"data\":{\"status\":0}}";
     }
 }
