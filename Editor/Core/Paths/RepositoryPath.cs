@@ -12,9 +12,20 @@ namespace Lore.Unity.Core.Paths
             }
 
             Value = value.Replace('\\', '/');
+            if (Value.StartsWith("/", StringComparison.Ordinal) ||
+                (Value.Length >= 2 && Value[1] == ':') ||
+                Value.IndexOf('\0') >= 0 || HasTraversal(Value))
+                throw new ArgumentException("A repository-relative path without traversal is required.", nameof(value));
         }
 
         public string Value { get; }
+
+        private static bool HasTraversal(string value)
+        {
+            foreach (var part in value.Split('/'))
+                if (part == ".." || part == "." || part.Length == 0) return true;
+            return false;
+        }
 
         public bool Equals(RepositoryPath other)
         {
