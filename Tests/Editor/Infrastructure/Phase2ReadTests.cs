@@ -112,5 +112,31 @@ namespace Lore.Unity.Tests.Infrastructure
                 CancellationToken.None).GetAwaiter().GetResult();
             Assert.That(result.Error.Code, Is.EqualTo(ErrorCode.RuntimeMissing));
         }
+
+        [Test]
+        public void CliParserReadsDocumentedSimpleStatusWithoutInventingLockState()
+        {
+            var text = "Repository " + new string('a', 32) + "\nOn branch main revision 1 -> " +
+                new string('b', 64) + "\nChanges not staged for commit:\nM Assets/Scene.unity\n" +
+                "Untracked files:\nA Assets/new.prefab\n";
+            var parser = new CliStatusParser();
+            var root = new AbsolutePath(Path.GetTempPath());
+            Assert.That(parser.ParseRepository(root, text).Value.Id.Value, Is.EqualTo(new string('a', 32)));
+            var files = parser.ParseFiles(text).Value;
+            Assert.That(files.Count, Is.EqualTo(2));
+            Assert.That(files[0].Status.Lock, Is.EqualTo(Lore.Unity.Core.Status.LockState.Unknown));
+            Assert.That(files[1].Status.Working, Is.EqualTo(Lore.Unity.Core.Status.WorkingState.Untracked));
+        }
+
+        [Test]
+        public void CliParserRejectsAmbiguousStagedAndUnrecognizedOutput()
+        {
+            var header = "Repository " + new string('a', 32) + "\nOn branch main revision 1 -> " +
+                new string('b', 64) + "\n";
+            var parser = new CliStatusParser();
+            Assert.That(parser.ParseFiles(header + "Changes staged for commit:\nA Assets/x.prefab\n").IsFailure, Is.True);
+            Assert.That(parser.ParseFiles(header + "Changes not staged for commit:\nM ../outside\n").IsFailure, Is.True);
+            Assert.That(parser.ParseFiles(header + "New output format\n").IsFailure, Is.True);
+        }
     }
 }

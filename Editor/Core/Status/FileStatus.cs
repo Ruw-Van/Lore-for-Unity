@@ -22,7 +22,8 @@ namespace Lore.Unity.Core.Status
         Unlocked = 0,
         LockedByCurrentUser,
         LockedByOther,
-        LockPending
+        LockPending,
+        Unknown
     }
 
     public enum ConflictState
@@ -30,7 +31,8 @@ namespace Lore.Unity.Core.Status
         None = 0,
         Conflicted,
         Resolving,
-        Resolved
+        Resolved,
+        Unknown
     }
 
     public enum RemoteState
