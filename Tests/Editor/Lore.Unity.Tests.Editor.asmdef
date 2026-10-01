@@ -1,0 +1,14 @@
+{
+  "name": "Lore.Unity.Tests.Editor",
+  "rootNamespace": "Lore.Unity.Tests",
+  "references": [
+    "Lore.Unity.Core.Editor"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "optionalUnityReferences": [
+    "TestAssemblies"
+  ],
+  "autoReferenced": false
+}

@@ -1,0 +1,12 @@
+{
+  "name": "Lore.Unity.Infrastructure.Editor",
+  "rootNamespace": "Lore.Unity.Infrastructure",
+  "references": [
+    "Lore.Unity.Core.Editor",
+    "Lore.Unity.Application.Editor"
+  ],
+  "includePlatforms": [
+    "Editor"
+  ],
+  "autoReferenced": false
+}

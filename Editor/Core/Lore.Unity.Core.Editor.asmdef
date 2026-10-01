@@ -1,0 +1,8 @@
+{
+  "name": "Lore.Unity.Core.Editor",
+  "rootNamespace": "Lore.Unity.Core",
+  "includePlatforms": [
+    "Editor"
+  ],
+  "autoReferenced": false
+}
