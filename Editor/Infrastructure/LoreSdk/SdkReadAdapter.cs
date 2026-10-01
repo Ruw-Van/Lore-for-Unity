@@ -16,6 +16,8 @@ namespace Lore.Unity.Infrastructure.LoreSdk
     // package currently targets net9/net10 and must not be pulled into Unity asmdefs.
     public interface ILoreSdkReadBridge
     {
+        // True only after the SDK and its native library have been verified as loadable.
+        bool IsAvailable { get; }
         Task<Result<SdkRepositoryData>> ReadRepositoryAsync(AbsolutePath root, CancellationToken cancellationToken);
         Task<Result<IReadOnlyList<SdkFileData>>> ReadStatusAsync(RepositoryId repository,
             IReadOnlyList<RepositoryPath> paths, CancellationToken cancellationToken);
@@ -32,6 +34,7 @@ namespace Lore.Unity.Infrastructure.LoreSdk
     public sealed class SdkFileData
     {
         public string Path;
+        public string FromPath;
         public WorkingState Working;
         public StageState Stage;
         public LockState Lock;
@@ -91,8 +94,14 @@ namespace Lore.Unity.Infrastructure.LoreSdk
                         !Enum.IsDefined(typeof(RemoteState), data.Remote)) return InvalidStatus();
                     var path = new RepositoryPath(data.Path);
                     if (!seen.Add(path)) return InvalidStatus();
+                    RepositoryPath? source = null;
+                    if (data.Working == WorkingState.Moved || data.Working == WorkingState.Copied)
+                    {
+                        if (string.IsNullOrWhiteSpace(data.FromPath)) return InvalidStatus();
+                        source = new RepositoryPath(data.FromPath);
+                    }
                     output.Add(new FileStatusEntry(path,
-                        new FileStatus(data.Working, data.Stage, data.Lock, data.Conflict, data.Remote)));
+                        new FileStatus(data.Working, data.Stage, data.Lock, data.Conflict, data.Remote), source));
                 }
             }
             catch (ArgumentException) { return InvalidStatus(); }

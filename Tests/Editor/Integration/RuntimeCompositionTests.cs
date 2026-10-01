@@ -1,6 +1,8 @@
 using Lore.Unity.Application.Runtime;
 using Lore.Unity.Integration.EditorLifecycle;
 using Lore.Unity.Infrastructure.Runtime;
+using Lore.Unity.Infrastructure.Backend;
+using Lore.Unity.Application.Backend;
 using NUnit.Framework;
 
 namespace Lore.Unity.Tests.Integration
@@ -33,6 +35,14 @@ namespace Lore.Unity.Tests.Integration
             var composition = RuntimeComposition.Create(manifest, "Windows-x64");
             Assert.That(composition.Manager == null, Is.False);
             Assert.That(composition.Context.Availability, Is.EqualTo(RuntimeAvailability.SetupRequired));
+        }
+
+        [Test]
+        public void ReadCompositionDoesNotAdvertiseUnverifiedRuntime()
+        {
+            var composition = ReadBackendComposition.Create(null, null, new RepositoryOperationGate());
+            Assert.That(composition.CreateDetector() == null, Is.True);
+            Assert.That(composition.Session.ResolveStatus().IsFailure, Is.True);
         }
     }
 }
