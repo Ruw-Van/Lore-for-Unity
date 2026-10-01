@@ -25,5 +25,14 @@ namespace Lore.Unity.Tests.Core
         {
             Assert.Throws<ArgumentException>(() => new AbsolutePath("Assets/Main.prefab"));
         }
+
+        [Test]
+        public void RepositoryPathRejectsAbsoluteAndTraversalPaths()
+        {
+            Assert.Throws<ArgumentException>(() => new RepositoryPath("../outside"));
+            Assert.Throws<ArgumentException>(() => new RepositoryPath("Assets/../outside"));
+            Assert.Throws<ArgumentException>(() => new RepositoryPath("/outside"));
+            Assert.Throws<ArgumentException>(() => new RepositoryPath("C:\\outside"));
+        }
     }
 }

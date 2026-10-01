@@ -5,6 +5,12 @@ namespace Lore.Unity.Core.Identifiers
         public RepositoryId(string value) : base(value, nameof(value)) { }
     }
 
+    // Runtime registry identity is separate from Lore's repository identity.
+    public sealed class ProjectId : StringIdentifier
+    {
+        public ProjectId(string value) : base(value, nameof(value)) { }
+    }
+
     public sealed class BranchId : StringIdentifier
     {
         public BranchId(string value) : base(value, nameof(value)) { }
@@ -20,7 +26,7 @@ namespace Lore.Unity.Core.Identifiers
         public RevisionSignature(string value) : base(value, nameof(value)) { }
     }
 
-    public readonly struct RevisionNumber
+    public readonly struct RevisionNumber : System.IEquatable<RevisionNumber>
     {
         public RevisionNumber(long value)
         {
@@ -33,6 +39,12 @@ namespace Lore.Unity.Core.Identifiers
         }
 
         public long Value { get; }
+
+        public bool Equals(RevisionNumber other) => Value == other.Value;
+
+        public override bool Equals(object obj) => obj is RevisionNumber other && Equals(other);
+
+        public override int GetHashCode() => Value.GetHashCode();
 
         public override string ToString()
         {

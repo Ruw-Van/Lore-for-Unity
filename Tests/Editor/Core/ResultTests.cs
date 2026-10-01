@@ -26,5 +26,12 @@ namespace Lore.Unity.Tests.Core
             Assert.That(result.Error, Is.SameAs(error));
             Assert.Throws<InvalidOperationException>(() => _ = result.Value);
         }
+
+        [Test]
+        public void DefaultResultsAreExplicitUnknownFailures()
+        {
+            Assert.That(default(Result).Error.Code, Is.EqualTo(ErrorCode.Unknown));
+            Assert.That(default(Result<int>).Error.Code, Is.EqualTo(ErrorCode.Unknown));
+        }
     }
 }
