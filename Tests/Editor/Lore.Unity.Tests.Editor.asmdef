@@ -2,7 +2,9 @@
   "name": "Lore.Unity.Tests.Editor",
   "rootNamespace": "Lore.Unity.Tests",
   "references": [
-    "Lore.Unity.Core.Editor"
+    "Lore.Unity.Core.Editor",
+    "Lore.Unity.Application.Editor",
+    "Lore.Unity.Infrastructure.Editor"
   ],
   "includePlatforms": [
     "Editor"
