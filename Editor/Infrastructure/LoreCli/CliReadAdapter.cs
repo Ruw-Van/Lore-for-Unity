@@ -14,7 +14,7 @@ namespace Lore.Unity.Infrastructure.LoreCli
 {
     // Construct only after the configured cache executable has passed Runtime verification.
     // This adapter never asks the system PATH for a Lore binary.
-    public sealed class CliReadAdapter : IRepositoryBackend, IStatusBackend
+    public sealed class CliReadAdapter : IRepositoryBackend, ISerializedStatusBackend
     {
         private readonly LoreCliRunner _runner;
         private readonly CliStatusParser _parser;
@@ -49,6 +49,16 @@ namespace Lore.Unity.Infrastructure.LoreCli
             if (paths == null) throw new ArgumentNullException(nameof(paths));
             if (!_roots.TryGetValue(repository, out var root))
                 return Failure("Repository has not been verified in this session.");
+            using (await _gate.AcquireAsync(repository, token))
+                return await ReadUnderLeaseAsync(repository, paths, token);
+        }
+
+        public async Task<Result<IReadOnlyList<FileStatusEntry>>> ReadUnderLeaseAsync(RepositoryId repository,
+            IReadOnlyList<RepositoryPath> paths, CancellationToken token)
+        {
+            if (repository == null) throw new ArgumentNullException(nameof(repository));
+            if (paths == null) throw new ArgumentNullException(nameof(paths));
+            if (!_roots.TryGetValue(repository, out var root)) return Failure("Repository has not been verified in this session.");
             var args = new List<string> { "--json", "--offline", "status", "--scan" };
             if (paths.Count > 0)
             {
@@ -59,8 +69,6 @@ namespace Lore.Unity.Infrastructure.LoreCli
                     args.Add(path.Value);
                 }
             }
-            using (await _gate.AcquireAsync(repository, token))
-            {
                 var output = await _runner.RunAsync(root, args, token);
                 if (output.IsFailure) return Result<IReadOnlyList<FileStatusEntry>>.Failure(output.Error);
                 if (output.Value.ExitCode != 0) return Failure("Lore CLI status failed.");
@@ -68,7 +76,6 @@ namespace Lore.Unity.Infrastructure.LoreCli
                 if (parsed.IsFailure) return Result<IReadOnlyList<FileStatusEntry>>.Failure(parsed.Error);
                 if (!parsed.Value.Repository.Id.Equals(repository)) return Failure("Lore repository changed.");
                 return Result<IReadOnlyList<FileStatusEntry>>.Success(parsed.Value.Files);
-            }
         }
 
         private static Result<IReadOnlyList<FileStatusEntry>> Failure(string message) =>

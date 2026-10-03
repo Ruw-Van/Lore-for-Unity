@@ -10,6 +10,15 @@ namespace Lore.Unity.Application.Backend
         IStatusBackend Status { get; }
     }
 
+    public interface IWriteBackendSet : IBackendSet
+    {
+        IRevisionBackend Revision { get; }
+        IPushBackend Push { get; }
+        ISyncBackend Sync { get; }
+        IBranchBackend Branch { get; }
+        ILockBackend Lock { get; }
+    }
+
     // Binding is selected once; a failed call never triggers another backend.
     public sealed class BackendSession
     {
@@ -40,6 +49,21 @@ namespace Lore.Unity.Application.Backend
             var backend = resolved.Value.Kind == BackendKind.Sdk ? _sdk?.Status : _cli?.Status;
             return backend == null ? Result<IStatusBackend>.Failure(Unavailable()) :
                 Result<IStatusBackend>.Success(backend);
+        }
+
+        public Result<IRevisionBackend> ResolveRevision() => ResolveWrite(BackendCapability.Revision, set => set.Revision);
+        public Result<IPushBackend> ResolvePush() => ResolveWrite(BackendCapability.Push, set => set.Push);
+        public Result<ISyncBackend> ResolveSync() => ResolveWrite(BackendCapability.Sync, set => set.Sync);
+        public Result<IBranchBackend> ResolveBranch() => ResolveWrite(BackendCapability.Branch, set => set.Branch);
+        public Result<ILockBackend> ResolveLock() => ResolveWrite(BackendCapability.Lock, set => set.Lock);
+
+        private Result<T> ResolveWrite<T>(BackendCapability capability, Func<IWriteBackendSet, T> pick) where T : class
+        {
+            var resolved = _resolver.Resolve(capability);
+            if (resolved.IsFailure) return Result<T>.Failure(resolved.Error);
+            var set = (resolved.Value.Kind == BackendKind.Sdk ? _sdk : _cli) as IWriteBackendSet;
+            var backend = set == null ? null : pick(set);
+            return backend == null ? Result<T>.Failure(Unavailable()) : Result<T>.Success(backend);
         }
 
         private static LoreError Unavailable() =>

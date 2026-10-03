@@ -18,10 +18,16 @@ namespace Lore.Unity.Infrastructure.Backend
         {
             var set = backend == BackendKind.Sdk ? _sdk : backend == BackendKind.Cli ? _cli : null;
             if (set == null) return false;
+            var writes = set as IWriteBackendSet;
             switch (capability)
             {
                 case BackendCapability.Repository: return set.Repository != null;
                 case BackendCapability.Status: return set.Status != null;
+                case BackendCapability.Revision: return writes?.Revision != null;
+                case BackendCapability.Push: return writes?.Push != null;
+                case BackendCapability.Sync: return writes?.Sync != null;
+                case BackendCapability.Branch: return writes?.Branch != null;
+                case BackendCapability.Lock: return writes?.Lock != null;
                 default: return false;
             }
         }

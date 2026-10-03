@@ -10,7 +10,7 @@ using Lore.Unity.Core.Status;
 namespace Lore.Unity.Application.Backend
 {
     public enum BackendKind { Sdk, Cli }
-    public enum BackendCapability { Repository, Status, Revision, Push, Branch, Lock, Diff, Merge }
+    public enum BackendCapability { Repository, Status, Revision, Push, Branch, Lock, Diff, Merge, Sync }
 
     // Resolve once before an operation. Never switch backends after a side effect.
     public interface IBackendCapabilityProvider
@@ -54,6 +54,14 @@ namespace Lore.Unity.Application.Backend
             IReadOnlyList<RepositoryPath> paths, CancellationToken cancellationToken);
     }
 
+    // Only call with an existing repository gate lease; avoids reacquiring the
+    // non-reentrant gate while verifying a staged write.
+    public interface ISerializedStatusBackend : IStatusBackend
+    {
+        Task<Result<IReadOnlyList<FileStatusEntry>>> ReadUnderLeaseAsync(RepositoryId repository,
+            IReadOnlyList<RepositoryPath> paths, CancellationToken cancellationToken);
+    }
+
     public interface IRevisionBackend
     {
         Task<Result> StageAsync(RepositoryId repository, IReadOnlyList<RepositoryPath> paths, CancellationToken cancellationToken);
@@ -69,6 +77,11 @@ namespace Lore.Unity.Application.Backend
     {
         Task<Result<IReadOnlyList<BranchName>>> ListAsync(RepositoryId repository, CancellationToken cancellationToken);
         Task<Result> SwitchAsync(RepositoryId repository, BranchName branch, CancellationToken cancellationToken);
+    }
+
+    public interface ISyncBackend
+    {
+        Task<Result> SyncAsync(RepositoryId repository, CancellationToken cancellationToken);
     }
 
     public interface ILockBackend
