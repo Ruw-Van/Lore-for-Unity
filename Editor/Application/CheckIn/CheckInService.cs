@@ -99,7 +99,10 @@ namespace Lore.Unity.Application.CheckIn
                         "Commit outcome is unknown; re-query Lore before retry."), null,
                         OperationState.Cancelled, true);
                 }
-                if (committed.IsFailure) return new CheckInOutcome(id, committed, null, OperationState.Failed);
+                // A failed transport or CLI completion does not prove that Lore did
+                // not commit locally. Never offer an automatic retry as a new commit.
+                if (committed.IsFailure) return new CheckInOutcome(id, committed, null,
+                    OperationState.Failed, true);
                 if (!plan.PushAfterCommit)
                     return new CheckInOutcome(id, committed, null, OperationState.Completed);
                 try

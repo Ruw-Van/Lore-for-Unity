@@ -31,6 +31,7 @@ namespace Lore.Unity.Tests.Application
             public bool PushFails;
             public bool VerifyFails;
             public bool CommitCancelled;
+            public bool CommitFailed;
             public bool UnrelatedStaged;
             public int Commits;
             public Task<Result<IReadOnlyList<FileStatusEntry>>> ReadAsync(RepositoryId id,
@@ -53,6 +54,8 @@ namespace Lore.Unity.Tests.Application
             {
                 Commits++;
                 if (CommitCancelled) throw new OperationCanceledException();
+                if (CommitFailed) return Task.FromResult(Result<RevisionSignature>.Failure(
+                    new LoreError(ErrorCode.Unknown, "CLI failure.")));
                 return Task.FromResult(Result<RevisionSignature>.Success(new RevisionSignature("revision")));
             }
             public Task<Result> PushAsync(RepositoryId id, CancellationToken token) =>
@@ -119,6 +122,16 @@ namespace Lore.Unity.Tests.Application
             Assert.That(outcome.IsCommitted, Is.False);
             Assert.That(fake.Staged, Is.False);
             Assert.That(fake.Commits, Is.EqualTo(0));
+        }
+
+        [Test]
+        public void FailedCommitRequiresRequeryBeforeRetry()
+        {
+            var plan = new CheckInPlan(new RepositoryId("repo"), new[] { new RepositoryPath("Assets/a.txt") }, "Message", false);
+            var outcome = Service(new Fake { CommitFailed = true }).ExecuteAsync(plan, CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Assert.That(outcome.CommitOutcomeUnknown, Is.True);
+            Assert.That(outcome.IsCommitted, Is.False);
         }
     }
 }
