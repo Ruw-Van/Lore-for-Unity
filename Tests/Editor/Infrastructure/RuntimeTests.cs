@@ -118,6 +118,33 @@ namespace Lore.Unity.Tests.Infrastructure
         }
 
         [Test]
+        public void CliProbeRejectsMissingInstalledExecutable()
+        {
+            var dir = new AbsolutePath(Path.Combine(Path.GetTempPath(), "missing-lore-" + Guid.NewGuid().ToString("N")));
+            var result = new CliRuntimeProbe().VerifyInstalledAsync(dir,
+                new Lore.Unity.Core.Identifiers.LoreVersion("0.10.0"), "Windows-x64", CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Assert.That(result.Error.Code, Is.EqualTo(ErrorCode.RuntimeMissing));
+            Assert.That(CliRuntimeProbe.Executable(dir, "Windows-x64").Value.EndsWith("lore.exe"), Is.True);
+        }
+
+        [Test]
+        public void CliProbeRejectsTamperedExecutableBeforeRunningIt()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "lore-probe-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            try
+            {
+                File.WriteAllText(Path.Combine(dir, "lore.exe"), "not a verified runtime");
+                var result = new CliRuntimeProbe().VerifyInstalledAsync(new AbsolutePath(dir),
+                    new Lore.Unity.Core.Identifiers.LoreVersion("0.10.0"), "Windows-x64", CancellationToken.None)
+                    .GetAwaiter().GetResult();
+                Assert.That(result.Error.Code, Is.EqualTo(ErrorCode.RuntimeCorrupted));
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Test]
         public void RegistryRoundTripsAndReplacesProjectRecord()
         {
             var dir = Path.Combine(Path.GetTempPath(), "lore-registry-test-" + Guid.NewGuid().ToString("N"));

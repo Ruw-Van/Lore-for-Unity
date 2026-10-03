@@ -1,0 +1,19 @@
+{
+  "loreVersion": "0.10.0",
+  "artifacts": [
+    {
+      "platform": "Windows-x64",
+      "officialArtifactUrl": "https://github.com/EpicGames/lore/releases/download/v0.10.0/lore-v0.10.0-x86_64-pc-windows-msvc.zip",
+      "sha256": "c755a7588b5bb2409a3803a085413bd159c119641e642484b4845dd527c42925",
+      "downloadSize": 15585909,
+      "artifactFormat": "zip"
+    },
+    {
+      "platform": "macOS-arm64",
+      "officialArtifactUrl": "https://github.com/EpicGames/lore/releases/download/v0.10.0/lore-v0.10.0-aarch64-apple-darwin.tar.gz",
+      "sha256": "4aef58f7e58c7ae618ebcf676bbe79925a64e2f6529c2e3094a02cbab192481b",
+      "downloadSize": 15755219,
+      "artifactFormat": "tar.gz"
+    }
+  ]
+}
