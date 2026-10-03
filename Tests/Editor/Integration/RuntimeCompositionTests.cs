@@ -35,6 +35,12 @@ namespace Lore.Unity.Tests.Integration
             var composition = RuntimeComposition.Create(manifest, "Windows-x64");
             Assert.That(composition.Manager == null, Is.False);
             Assert.That(composition.Context.Availability, Is.EqualTo(RuntimeAvailability.SetupRequired));
+            var layout = new RuntimeLayout(new Lore.Unity.Core.Paths.AbsolutePath(
+                System.IO.Path.Combine(System.IO.Path.GetTempPath(), "missing-lore-" + System.Guid.NewGuid().ToString("N"))));
+            var inactive = composition.ActivateAsync(layout, new CliRuntimeProbe(), System.Threading.CancellationToken.None)
+                .GetAwaiter().GetResult();
+            Assert.That(inactive.Context.Availability, Is.EqualTo(RuntimeAvailability.SetupRequired));
+            Assert.That(inactive.Reads == null, Is.True);
         }
 
         [Test]

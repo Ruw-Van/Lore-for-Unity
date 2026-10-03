@@ -1,9 +1,9 @@
 # Phase 1 implementation boundary
 
-This package currently contains contracts and safety foundations, not a bundled Lore runtime.
-The verified Lore version, official Epic artifact URLs, formats, sizes, checksums,
-expected executable names, and version-probe invocation have not been confirmed.
-No placeholder manifest is distributed and no artifact is downloaded at Editor startup.
+This package contains contracts and safety foundations, not a bundled Lore runtime.
+The official v0.10.0 artifact URLs, formats, sizes and archive checksums were confirmed later;
+see [Phase 2 integration notes](Phase2_Integration_Notes.md) for the pinned manifest and CLI probe.
+No artifact is downloaded at Editor startup.
 
 - `Core` contains typed identifiers, paths, errors, results, file states and an immutable repository snapshot.
 - `Application/Backend` splits repository, status, revision, push, branch, lock, diff and merge contracts.
@@ -20,7 +20,7 @@ No placeholder manifest is distributed and no artifact is downloaded at Editor s
   the caller's cross-process lock. Project records are not a reliable process-liveness signal; removal
   remains disabled until a real usage detector can prevent deletion of an in-use runtime.
 - Bootstrap reads the package-local `Editor/Infrastructure/Runtime/runtime-manifest.json` asset
-  after Editor initialization, but that file is intentionally absent until official metadata is confirmed.
+  after Editor initialization. The file was added once official metadata was confirmed.
   It does not touch the network, disk cache or system PATH. Missing manifest means Setup Required;
   unsupported host architecture means Unsupported Platform. SDK/CLI adapters and backend activation
   belong to Phase 2 after the Lore interfaces and runtime are verified.

@@ -1,19 +1,30 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
+using System.Threading.Tasks;
 using Lore.Unity.Application.Runtime;
+using Lore.Unity.Infrastructure.Backend;
 using Lore.Unity.Infrastructure.Runtime;
 
 namespace Lore.Unity.Integration.EditorLifecycle
 {
     public sealed class RuntimeComposition
     {
-        private RuntimeComposition(RuntimeContext context, LoreRuntimeManager manager)
+        private readonly ValidatedRuntimeManifest _manifest;
+        private readonly string _platform;
+
+        private RuntimeComposition(RuntimeContext context, LoreRuntimeManager manager,
+            ValidatedRuntimeManifest manifest = null, string platform = null, ReadBackendComposition reads = null)
         {
             Context = context;
             Manager = manager;
+            _manifest = manifest;
+            _platform = platform;
+            Reads = reads;
         }
         public RuntimeContext Context { get; }
         public LoreRuntimeManager Manager { get; }
+        public ReadBackendComposition Reads { get; }
 
         public static string CurrentPlatform()
         {
@@ -36,7 +47,21 @@ namespace Lore.Unity.Integration.EditorLifecycle
             var manager = new LoreRuntimeManager(validated.Value);
             if (manager.FindArtifact(platform).IsFailure)
                 return new RuntimeComposition(new RuntimeContext(RuntimeAvailability.UnsupportedPlatform), null);
-            return new RuntimeComposition(new RuntimeContext(RuntimeAvailability.SetupRequired), manager);
+            return new RuntimeComposition(new RuntimeContext(RuntimeAvailability.SetupRequired), manager,
+                validated.Value, platform);
+        }
+
+        public async Task<RuntimeComposition> ActivateAsync(RuntimeLayout layout, CliRuntimeProbe probe,
+            CancellationToken cancellationToken)
+        {
+            if (_manifest == null || layout == null || probe == null) return this;
+            var installed = await probe.VerifyInstalledAsync(layout.Installation(_manifest.LoreVersion, _platform),
+                _manifest.LoreVersion, _platform, cancellationToken);
+            if (installed.IsFailure) return this;
+            var executable = CliRuntimeProbe.Executable(layout.Installation(_manifest.LoreVersion, _platform), _platform);
+            var reads = ReadBackendComposition.Create(null, executable, new RepositoryOperationGate());
+            return new RuntimeComposition(new RuntimeContext(RuntimeAvailability.Ready), Manager,
+                _manifest, _platform, reads);
         }
     }
 }

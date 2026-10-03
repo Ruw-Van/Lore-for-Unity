@@ -25,8 +25,8 @@ Official references checked on 2026-10-02:
   confirms a hidden `--json` option serializing one LoreEvent per line. The adapter parses this
   event stream and rejects malformed or unknown events instead of parsing terminal text.
   `--scan` is serialized per repository with a gate shared by future write services.
-  Repository/Status capabilities must be advertised only when a verified cached executable is
-  explicitly injected; bootstrap does not create or register one.
+  Repository/Status capabilities are advertised only after a cache-local executable passes
+  the pinned executable SHA-256 and `--version` probe. Bootstrap never searches the system PATH.
 - [Quickstart](https://github.com/EpicGames/lore/blob/main/docs/tutorials/quickstart.md)
   documents `.lore/` as a normal checkout marker. Detection treats the marker only as a hint;
   the Repository ID must come from Lore itself. Other checkout layouts require explicit support.
@@ -41,12 +41,18 @@ For local validation, the official v0.10.0 Windows x64 CLI ZIP was downloaded to
 directory (not the package). Its SHA-256 matched the digest published on the
 [Epic release](https://github.com/EpicGames/lore/releases/tag/v0.10.0):
 `c755a7588b5bb2409a3803a085413bd159c119641e642484b4845dd527c42925`.
-An offline disposable Lore repository was used to verify JSON revision, untracked and staged
-events. This does not authorize automatic Runtime installation or establish a plugin-wide
-verified Lore version. macOS arm64 and Unity EditMode integration remain untested.
+The official macOS arm64 archive also matched its published digest
+(`4aef58f7e58c7ae618ebcf676bbe79925a64e2f6529c2e3094a02cbab192481b`).
+The two extracted executables were hashed and pinned in `CliRuntimeProbe` for **v0.10.0 only**.
+An offline disposable Lore repository was used on Windows to verify JSON revision, untracked and
+staged events. The package now pins the official artifact URLs and digests in
+`Editor/Infrastructure/Runtime/runtime-manifest.json`; it still never downloads automatically.
+macOS arm64 execution and Unity EditMode integration remain untested.
 
-Before activating live status in Unity: verify an installed Runtime/executable with an exact
-version probe, inject the CLI adapter and shared operation gate from the Composition Root,
-test the full JSON mapping on Windows x64 and macOS arm64 in a Unity host, and arrange a
-Unity-compatible SDK bridge if SDK-first selection is to be restored. Until then bootstrap
-leaves the Runtime unconfigured and the capability resolver returns Unsupported.
+Bootstrap probes only the version-specific user cache. If verification passes it creates the
+CLI-first read services, detects the project's Lore repository, and requests an initial scan.
+Without a verified cached executable it remains Setup Required; there is no silent PATH fallback.
+Installation remains an explicit user operation (the archive installer is not yet available),
+so simply importing the package does not install Lore. Before release, test the full JSON mapping
+on macOS arm64 and Windows x64 in a Unity host. A Unity-compatible SDK bridge is still required
+to restore SDK-first selection.
