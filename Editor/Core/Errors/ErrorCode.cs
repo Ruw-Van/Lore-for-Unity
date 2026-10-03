@@ -13,6 +13,7 @@ namespace Lore.Unity.Core.Errors
         RuntimeCorrupted,
         VersionMismatch,
         ValidationFailed,
-        Unknown
+        Unknown,
+        Cancelled
     }
 }
