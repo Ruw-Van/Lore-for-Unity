@@ -31,6 +31,8 @@ namespace Lore.Unity.Tests.Application
             public bool PushFails;
             public bool VerifyFails;
             public bool CommitCancelled;
+            public bool UnrelatedStaged;
+            public int Commits;
             public Task<Result<IReadOnlyList<FileStatusEntry>>> ReadAsync(RepositoryId id,
                 IReadOnlyList<RepositoryPath> paths, CancellationToken token)
             {
@@ -38,13 +40,18 @@ namespace Lore.Unity.Tests.Application
                 var status = new FileStatus(WorkingState.Modified,
                     Staged && !VerifyFails ? StageState.Staged : StageState.Unstaged,
                     LockState.Unknown, ConflictState.None, RemoteState.Unknown);
-                IReadOnlyList<FileStatusEntry> entries = new[] { new FileStatusEntry(paths[0], status) };
+                var entries = new List<FileStatusEntry> { new FileStatusEntry(new RepositoryPath("Assets/a.txt"), status) };
+                if (UnrelatedStaged && paths.Count == 0)
+                    entries.Add(new FileStatusEntry(new RepositoryPath("Assets/other.txt"),
+                        new FileStatus(WorkingState.Modified, StageState.Staged,
+                            LockState.Unknown, ConflictState.None, RemoteState.Unknown)));
                 return Task.FromResult(Result<IReadOnlyList<FileStatusEntry>>.Success(entries));
             }
             public Task<Result> StageAsync(RepositoryId id, IReadOnlyList<RepositoryPath> paths, CancellationToken token)
             { Staged = true; return Task.FromResult(Result.Success()); }
             public Task<Result<RevisionSignature>> CreateAsync(RepositoryId id, string message, CancellationToken token)
             {
+                Commits++;
                 if (CommitCancelled) throw new OperationCanceledException();
                 return Task.FromResult(Result<RevisionSignature>.Success(new RevisionSignature("revision")));
             }
@@ -101,6 +108,17 @@ namespace Lore.Unity.Tests.Application
                 .GetAwaiter().GetResult();
             Assert.That(outcome.CommitOutcomeUnknown, Is.True);
             Assert.That(outcome.Commit.Error.Code, Is.EqualTo(ErrorCode.Unknown));
+        }
+
+        [Test]
+        public void UnrelatedStagedChangesBlockCommit()
+        {
+            var fake = new Fake { UnrelatedStaged = true };
+            var plan = new CheckInPlan(new RepositoryId("repo"), new[] { new RepositoryPath("Assets/a.txt") }, "Message", false);
+            var outcome = Service(fake).ExecuteAsync(plan, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.That(outcome.IsCommitted, Is.False);
+            Assert.That(fake.Staged, Is.False);
+            Assert.That(fake.Commits, Is.EqualTo(0));
         }
     }
 }

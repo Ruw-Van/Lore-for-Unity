@@ -1,0 +1,33 @@
+using Lore.Unity.Core.Errors;
+using Lore.Unity.Core.Identifiers;
+using Lore.Unity.Infrastructure.LoreCli;
+using NUnit.Framework;
+
+namespace Lore.Unity.Tests.Infrastructure
+{
+    public sealed class CliWriteEventParserTests
+    {
+        [Test]
+        public void CommitRequiresSuccessfulCompletionAndMatchingIdentity()
+        {
+            var id = new RepositoryId(new string('a', 32));
+            var signature = new string('b', 64);
+            var events = "{\"tagName\":\"revisionCommitRevision\",\"data\":{\"repository\":\"" +
+                id.Value + "\",\"revision\":\"" + signature + "\"}}\n" +
+                "{\"tagName\":\"complete\",\"data\":{\"status\":0}}\n";
+            Assert.That(new CliWriteEventParser().Commit(id, events).Value.Value, Is.EqualTo(signature));
+            Assert.That(new CliWriteEventParser().Commit(new RepositoryId("other"), events).IsFailure, Is.True);
+        }
+
+        [Test]
+        public void NonzeroCompletionDoesNotBecomeSuccess()
+        {
+            var events = "{\"tagName\":\"complete\",\"data\":{\"status\":4}}\n";
+            Assert.That(new CliWriteEventParser().Verify(events).Error.Code, Is.EqualTo(ErrorCode.Unknown));
+            Assert.That(new CliWriteEventParser().Verify("{\"tagName\":\"log\",\"data\":{}}\n").IsFailure, Is.True);
+            Assert.That(new CliWriteEventParser().Verify(
+                "{\"tagName\":\"complete\",\"data\":{\"status\":0}}\n" +
+                "{\"tagName\":\"log\",\"data\":{}}\n").IsFailure, Is.True);
+        }
+    }
+}

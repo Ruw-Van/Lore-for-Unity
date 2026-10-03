@@ -37,21 +37,28 @@ namespace Lore.Unity.Application.CheckIn
             if (revision.IsFailure || status.IsFailure || (plan.PushAfterCommit && push.IsFailure))
                 return Failed(id, revision.IsFailure ? revision.Error : status.IsFailure ? status.Error : push.Error);
 
-            var validated = await _guard.ValidateBeforeWriteAsync(plan.Repository, token);
-            if (validated.IsFailure) return Failed(id, validated.Error);
             using (await _gate.AcquireAsync(plan.Repository, token))
             {
-                var before = await ReadUnderLease(status.Value, plan.Repository, plan.Paths, token);
+                var validated = await _guard.ValidateBeforeWriteAsync(plan.Repository, token);
+                if (validated.IsFailure) return Failed(id, validated.Error);
+                // Commit includes all staged paths, not just paths passed to StageAsync.
+                // Scan the entire repository before writing and reject unrelated staged files.
+                var before = await ReadUnderLease(status.Value, plan.Repository,
+                    Array.Empty<RepositoryPath>(), token);
                 if (before.IsFailure) return Failed(id, before.Error);
                 var selected = new HashSet<RepositoryPath>(plan.Paths);
                 var changes = new List<RepositoryPath>();
                 foreach (var entry in before.Value)
                 {
-                    if (!selected.Contains(entry.Path))
-                        return Failed(id, new LoreError(ErrorCode.ValidationFailed, "Unexpected path in targeted status."));
-                    if (entry.Status.Working != WorkingState.Unchanged || entry.Status.Stage != StageState.Unstaged)
+                    if (entry.Status.Stage != StageState.Unstaged)
+                        return Failed(id, new LoreError(ErrorCode.ValidationFailed,
+                            "Existing staged changes must be resolved before Check In."));
+                    if (selected.Contains(entry.Path) && entry.Status.Working != WorkingState.Unchanged)
                         changes.Add(entry.Path);
                 }
+                if (changes.Count != selected.Count)
+                    return Failed(id, new LoreError(ErrorCode.ValidationFailed,
+                        "Every selected path must have a detected change."));
                 if (changes.Count == 0)
                     return Failed(id, new LoreError(ErrorCode.ValidationFailed, "No changes selected for Check In."));
 
@@ -73,8 +80,12 @@ namespace Lore.Unity.Application.CheckIn
                 if (after.IsFailure) return Failed(id, after.Error);
                 var verified = new HashSet<RepositoryPath>();
                 foreach (var entry in after.Value)
-                    if (entry.Status.Stage == StageState.Staged || entry.Status.Stage == StageState.PartiallyStaged)
-                        verified.Add(entry.Path);
+                {
+                    if (!selected.Contains(entry.Path) || entry.Status.Stage != StageState.Staged ||
+                        !verified.Add(entry.Path))
+                        return Failed(id, new LoreError(ErrorCode.ValidationFailed,
+                            "Stage verification failed; staged changes were not rolled back."));
+                }
                 foreach (var path in changes)
                     if (!verified.Contains(path))
                         return Failed(id, new LoreError(ErrorCode.ValidationFailed,

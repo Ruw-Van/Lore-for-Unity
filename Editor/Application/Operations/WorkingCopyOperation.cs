@@ -30,10 +30,10 @@ namespace Lore.Unity.Application.Operations
             if (repository == null) throw new ArgumentNullException(nameof(repository));
             if (loreWrite == null) throw new ArgumentNullException(nameof(loreWrite));
             var id = WriteErrors.NewId();
-            var preflight = await _guard.ValidateBeforeWriteAsync(repository, token);
-            if (preflight.IsFailure) return new WriteOutcome(id, preflight, OperationState.Failed);
             using (await _gate.AcquireAsync(repository, token))
             {
+                var preflight = await _guard.ValidateBeforeWriteAsync(repository, token);
+                if (preflight.IsFailure) return new WriteOutcome(id, preflight, OperationState.Failed);
                 var recorded = await _journal.BeginAsync(id, repository, operation, token);
                 if (recorded.IsFailure) return new WriteOutcome(id, recorded, OperationState.Failed);
                 Result lore;
