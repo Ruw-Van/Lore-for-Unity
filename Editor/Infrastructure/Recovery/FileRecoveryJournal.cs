@@ -50,12 +50,20 @@ namespace Lore.Unity.Infrastructure.Recovery
             lock (_mutex)
             {
                 token.ThrowIfCancellationRequested();
-                var pending = PendingCore();
-                if (pending.IsFailure) return Task.FromResult(Result.Failure(pending.Error));
-                foreach (var item in pending.Value)
-                    if (item.Repository.Equals(repository))
-                        return Task.FromResult(Failure("An unresolved write must be inspected before another write."));
-                return Task.FromResult(Write(name + ".begin", repository.Value + "\n" + operation + "\n"));
+                try
+                {
+                    using (ProcessLock())
+                    {
+                        var pending = PendingCore();
+                        if (pending.IsFailure) return Task.FromResult(Result.Failure(pending.Error));
+                        foreach (var item in pending.Value)
+                            if (item.Repository.Equals(repository))
+                                return Task.FromResult(Failure("An unresolved write must be inspected before another write."));
+                        return Task.FromResult(Write(name + ".begin", repository.Value + "\n" + operation + "\n"));
+                    }
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                { return Task.FromResult(Failure("Recovery journal is unavailable or in use by another Editor.")); }
             }
         }
 
@@ -67,7 +75,12 @@ namespace Lore.Unity.Infrastructure.Recovery
 
         public Result<IReadOnlyList<PendingRecovery>> Pending()
         {
-            lock (_mutex) return PendingCore();
+            lock (_mutex)
+            {
+                try { using (ProcessLock()) return PendingCore(); }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                { return Invalid<IReadOnlyList<PendingRecovery>>(); }
+            }
         }
 
         private Task<Result> Mark(OperationId id, string suffix, string prerequisite, CancellationToken token)
@@ -76,10 +89,25 @@ namespace Lore.Unity.Infrastructure.Recovery
             lock (_mutex)
             {
                 token.ThrowIfCancellationRequested();
-                if (!File.Exists(Path.Combine(_directory, name + prerequisite)))
-                    return Task.FromResult(Failure("Journal boundary is missing."));
-                return Task.FromResult(Write(name + suffix, string.Empty));
+                try
+                {
+                    using (ProcessLock())
+                    {
+                        if (!File.Exists(Path.Combine(_directory, name + prerequisite)))
+                            return Task.FromResult(Failure("Journal boundary is missing."));
+                        return Task.FromResult(Write(name + suffix, string.Empty));
+                    }
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                { return Task.FromResult(Failure("Recovery journal is unavailable or in use by another Editor.")); }
             }
+        }
+
+        private FileStream ProcessLock()
+        {
+            Directory.CreateDirectory(_directory);
+            return new FileStream(Path.Combine(_directory, ".journal.lock"), FileMode.OpenOrCreate,
+                FileAccess.ReadWrite, FileShare.None);
         }
 
         private Result<IReadOnlyList<PendingRecovery>> PendingCore()
@@ -91,6 +119,7 @@ namespace Lore.Unity.Infrastructure.Recovery
                 foreach (var file in Directory.GetFiles(_directory))
                 {
                     var filename = Path.GetFileName(file);
+                    if (filename == ".journal.lock") continue;
                     if (!filename.EndsWith(".begin", StringComparison.Ordinal))
                     {
                         if (filename.EndsWith(".applied", StringComparison.Ordinal) ||

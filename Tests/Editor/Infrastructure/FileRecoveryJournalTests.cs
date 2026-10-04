@@ -66,5 +66,25 @@ namespace Lore.Unity.Tests.Infrastructure
             }
             finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
         }
+
+        [Test]
+        public void OtherProcessLockBlocksJournalReadsAndWrites()
+        {
+            var path = Path.Combine(Path.GetTempPath(), "lore-journal-test-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                Directory.CreateDirectory(path);
+                var journal = new FileRecoveryJournal(new AbsolutePath(path));
+                using (new FileStream(Path.Combine(path, ".journal.lock"), FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite, FileShare.None))
+                {
+                    Assert.That(journal.Pending().IsFailure, Is.True);
+                    Assert.That(journal.BeginAsync(new OperationId(Guid.NewGuid().ToString("N")),
+                        new RepositoryId(new string('a', 32)), "Sync", CancellationToken.None).Result.IsFailure, Is.True);
+                }
+                Assert.That(journal.Pending().IsSuccess, Is.True);
+            }
+            finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
+        }
     }
 }
