@@ -25,8 +25,22 @@ namespace Lore.Unity.Infrastructure.LoreCli
             [DataMember(Name = "revision")] public string Revision { get; set; }
             [DataMember(Name = "repository")] public string Repository { get; set; }
             [DataMember(Name = "name")] public string Name { get; set; }
-            [DataMember(Name = "branch")] public Data Branch { get; set; }
             [DataMember(Name = "targetRevision")] public string TargetRevision { get; set; }
+        }
+        [DataContract]
+        private sealed class BranchEvent
+        {
+            [DataMember(Name = "data")] public BranchData Data { get; set; }
+        }
+        [DataContract]
+        private sealed class BranchData
+        {
+            [DataMember(Name = "branch")] public BranchInfo Branch { get; set; }
+        }
+        [DataContract]
+        private sealed class BranchInfo
+        {
+            [DataMember(Name = "name")] public string Name { get; set; }
         }
 
         public Result Verify(string text)
@@ -52,6 +66,38 @@ namespace Lore.Unity.Infrastructure.LoreCli
                 }
             return signature == null ? Invalid<RevisionSignature>() :
                 Result<RevisionSignature>.Success(new RevisionSignature(signature));
+        }
+
+        // The CLI may create the local revision, emit complete:0, then fail
+        // relaying to a remote. This is only a candidate until a fresh Lore
+        // status confirms that the repository HEAD equals this signature.
+        public Result<RevisionSignature> LocalCommitCandidate(RepositoryId repository, string text)
+        {
+            if (repository == null) throw new ArgumentNullException(nameof(repository));
+            var events = Read(text);
+            if (events.IsFailure) return Result<RevisionSignature>.Failure(events.Error);
+            string signature = null;
+            var localCompleted = false;
+            var remoteFailed = false;
+            foreach (var item in events.Value)
+            {
+                if (item.Tag == "revisionCommitRevision")
+                {
+                    if (localCompleted || signature != null || item.Data?.Repository != repository.Value ||
+                        !Hex(item.Data.Revision, 64)) return Invalid<RevisionSignature>();
+                    signature = item.Data.Revision;
+                }
+                else if (item.Tag == "complete")
+                {
+                    if (!localCompleted && signature != null && item.Data?.Status == 0)
+                        localCompleted = true;
+                    else if (localCompleted && !remoteFailed && item.Data?.Status > 0)
+                        remoteFailed = true;
+                    else return Invalid<RevisionSignature>();
+                }
+            }
+            return localCompleted && remoteFailed && events.Value[events.Value.Count - 1].Tag == "complete"
+                ? Result<RevisionSignature>.Success(new RevisionSignature(signature)) : Invalid<RevisionSignature>();
         }
 
         public Result Sync(RepositoryId repository, string text)
@@ -85,12 +131,24 @@ namespace Lore.Unity.Infrastructure.LoreCli
             {
                 if (item.Tag == "branchSwitchBegin") begin++;
                 if (item.Tag == "branchSwitchEnd")
-                {
                     end++;
-                    if (item.Data?.Branch?.Name != branch.Value) return Invalid();
-                }
             }
-            return begin == 1 && end == 1 ? Result.Success() : Invalid();
+            if (begin != 1 || end != 1) return Invalid();
+            try
+            {
+                foreach (var line in text.TrimEnd('\r', '\n').Split('\n'))
+                    if (line.Contains("\"tagName\":\"branchSwitchEnd\""))
+                    {
+                        using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(line)))
+                        {
+                            var serializer = new DataContractJsonSerializer(typeof(BranchEvent));
+                            var item = (BranchEvent)serializer.ReadObject(stream);
+                            if (item?.Data?.Branch?.Name != branch.Value) return Invalid();
+                        }
+                    }
+            }
+            catch (SerializationException) { return Invalid(); }
+            return Result.Success();
         }
 
         public Result<IReadOnlyList<BranchName>> Branches(string text)

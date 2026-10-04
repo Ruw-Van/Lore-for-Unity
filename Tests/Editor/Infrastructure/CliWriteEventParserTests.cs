@@ -42,6 +42,10 @@ namespace Lore.Unity.Tests.Infrastructure
                 "{\"tagName\":\"log\",\"data\":{}}\n" +
                 "{\"tagName\":\"complete\",\"data\":{\"status\":111}}\n";
             Assert.That(new CliWriteEventParser().Commit(id, events).IsFailure, Is.True);
+            Assert.That(new CliWriteEventParser().LocalCommitCandidate(id, events).Value.Value,
+                Is.EqualTo(new string('b', 64)));
+            Assert.That(new CliWriteEventParser().LocalCommitCandidate(new RepositoryId(new string('c', 32)), events)
+                .IsFailure, Is.True);
         }
 
         [Test]

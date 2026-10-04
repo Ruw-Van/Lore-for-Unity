@@ -17,6 +17,7 @@ namespace Lore.Unity.Infrastructure.LoreCli
         private readonly LoreCliRunner _runner;
         private readonly RepositoryLocations _roots;
         private readonly CliWriteEventParser _parser;
+        private readonly CliStatusParser _status = new CliStatusParser();
 
         public CliWriteAdapter(LoreCliRunner runner, RepositoryLocations roots, CliWriteEventParser parser)
         {
@@ -41,9 +42,31 @@ namespace Lore.Unity.Infrastructure.LoreCli
         public async Task<Result<RevisionSignature>> CreateAsync(RepositoryId repository, string message, CancellationToken token)
         {
             if (string.IsNullOrWhiteSpace(message)) throw new ArgumentException("Commit message required.", nameof(message));
-            var output = await RunAsync(repository, new[] { "--json", "--offline", "commit", message }, token);
-            return output.IsFailure ? Result<RevisionSignature>.Failure(output.Error) :
-                _parser.Commit(repository, output.Value.StandardOutput);
+            if (repository == null) throw new ArgumentNullException(nameof(repository));
+            if (!_roots.TryGet(repository, out var root))
+                return Result<RevisionSignature>.Failure(new LoreError(ErrorCode.InvalidRepository,
+                    "Repository has not been verified in this session."));
+            var output = await _runner.RunAsync(root, new[] { "--json", "--offline", "commit", message }, token);
+            if (output.IsFailure) return Result<RevisionSignature>.Failure(output.Error);
+            if (output.Value.ExitCode == 0)
+            {
+                var complete = _parser.Commit(repository, output.Value.StandardOutput);
+                if (complete.IsSuccess) return complete;
+            }
+            var candidate = _parser.LocalCommitCandidate(repository, output.Value.StandardOutput);
+            if (candidate.IsFailure) return Result<RevisionSignature>.Failure(new LoreError(ErrorCode.Unknown,
+                "Commit outcome is unknown; re-query Lore before retry."));
+            var status = await _runner.RunAsync(root,
+                new[] { "--json", "--offline", "status", "--revision-only" }, token);
+            if (status.IsFailure || status.Value.ExitCode != 0)
+                return Result<RevisionSignature>.Failure(new LoreError(ErrorCode.Unknown,
+                    "Commit outcome could not be confirmed."));
+            var parsed = _status.Parse(root, status.Value.StandardOutput);
+            if (parsed.IsFailure || !parsed.Value.Repository.Id.Equals(repository) ||
+                !parsed.Value.Repository.Revision.Equals(candidate.Value))
+                return Result<RevisionSignature>.Failure(new LoreError(ErrorCode.Unknown,
+                    "Commit revision did not match the current Lore state."));
+            return candidate;
         }
 
         public async Task<Result> PushAsync(RepositoryId repository, CancellationToken token) =>
