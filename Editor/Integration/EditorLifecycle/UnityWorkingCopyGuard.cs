@@ -17,9 +17,14 @@ namespace Lore.Unity.Integration.EditorLifecycle
     public sealed class UnityWorkingCopyGuard : IWorkingCopyGuard
     {
         private readonly int _mainThread;
+        private readonly SynchronizationContext _editorContext;
 
         public UnityWorkingCopyGuard()
         {
+            _editorContext = SynchronizationContext.Current;
+            if (_editorContext == null ||
+                _editorContext.GetType().FullName != "UnityEngine.UnitySynchronizationContext")
+                throw new InvalidOperationException("Construct the guard on the Unity Editor main thread.");
             _mainThread = Thread.CurrentThread.ManagedThreadId;
         }
 
@@ -49,7 +54,8 @@ namespace Lore.Unity.Integration.EditorLifecycle
 
         private Result CheckState()
         {
-            if (Thread.CurrentThread.ManagedThreadId != _mainThread)
+            if (Thread.CurrentThread.ManagedThreadId != _mainThread ||
+                !ReferenceEquals(SynchronizationContext.Current, _editorContext))
                 return Fail("Unity working copy check must run on the Editor main thread.");
             if (EditorApplication.isCompiling || EditorApplication.isUpdating || EditorApplication.isPlayingOrWillChangePlaymode)
                 return Fail("Unity is compiling, importing, or entering Play mode.");
