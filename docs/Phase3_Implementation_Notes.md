@@ -12,4 +12,4 @@
 - Application Service は Check In／Push／Sync／Branch の一覧・切替／Lock の取得・解放を提供する。Windows x64 の使い捨て Repository で `CheckInService` の Status → Stage → Commit → Status、および CLI Adapter の Stage → Commit → Branch Switch の通し確認に成功。外部 `netstandard2.1`・C# 9.0 ビルドとスタブ NUnit テストでも検証済み。
 - Unity Test Runner と macOS arm64 実機は未検証。外部 `netstandard2.1` C# 9.0 ビルド／スタブ NUnit テストは Unity 実行の代わりではない。
 
-Phase 3 の Application Service 実装は完了。Unity Asset／Scene／Prefab の実際の導線と起動時の接続は Phase 4、復旧 UI は Phase 6 の範囲であり、Editor 起動時には書き込みを自動有効化しない。Unity Test Runner、macOS arm64、実 Remote の Push／Lock は検証可能な環境が必要なため未確認として引き継ぐ。これらの結果を確認するまで Phase 3 を実機検証完了とは扱わない。
+Phase 3 の Application Service 実装は完了。Unity Asset／Scene／Prefab の実際の導線と起動時の接続は Phase 4、復旧 UI は Phase 6 の範囲であり、Editor 起動時には書き込みを自動有効化しない。Unity Test Runner、macOS arm64、実 Remote の Push／Lock は検証可能な環境が必要なため未確認として引き継ぐ。これらの実機検証は後工程へ延期する方針とし、Phase 3 を実機検証完了とは扱わない。
