@@ -1,4 +1,8 @@
 using Lore.Unity.Application.Runtime;
+using Lore.Unity.Integration.Assets;
+using Lore.Unity.Core.Identifiers;
+using Lore.Unity.Core.Paths;
+using Lore.Unity.Core.Errors;
 using Lore.Unity.Infrastructure.Runtime;
 using System.Threading;
 using UnityEditor;
@@ -13,6 +17,10 @@ namespace Lore.Unity.Integration.EditorLifecycle
         private const string ManifestAssetPath =
             "Packages/com.ruwvan.lore-for-unity/Editor/Infrastructure/Runtime/runtime-manifest.json";
         private static RuntimeComposition _composition;
+        private static UnityStatusProjection _projection;
+        private static UnityChangeBridge _changes;
+        private static RepositoryId _repository;
+        private static LoreError _initialStatusError;
         private static readonly CancellationTokenSource Reload = new CancellationTokenSource();
 
         static LoreBootstrap()
@@ -25,6 +33,10 @@ namespace Lore.Unity.Integration.EditorLifecycle
         }
 
         public static RuntimeContext Context => _composition.Context;
+        public static UnityLogicalAssetIndex Assets => _projection?.Current;
+        public static RepositoryId Repository => _repository;
+        public static LoreError StatusError => _projection?.Current != null ? _changes?.LastError :
+            _changes?.LastError ?? _initialStatusError;
 
         private static async void OnEditorReady()
         {
@@ -46,11 +58,24 @@ namespace Lore.Unity.Integration.EditorLifecycle
                 _composition = activated;
                 if (activated.Reads == null) return;
                 var detector = activated.Reads.CreateDetector();
-                var projectRoot = new Lore.Unity.Core.Paths.AbsolutePath(
+                var projectRoot = new AbsolutePath(
                     System.IO.Path.GetDirectoryName(UnityEngine.Application.dataPath));
                 var repository = await detector.DetectAsync(projectRoot, Reload.Token);
                 if (repository.IsSuccess && !Reload.IsCancellationRequested)
-                    await activated.Reads.Status.RefreshRepositoryAsync(repository.Value.Id, Reload.Token);
+                {
+                    var mapper = new UnityAssetPathMapper(projectRoot, repository.Value.Root);
+                    var projection = new UnityStatusProjection(activated.Reads.Status, activated.Reads.Store,
+                        mapper, new UnityGuidResolver());
+                    _repository = repository.Value.Id;
+                    _projection = projection;
+                    _changes = new UnityChangeBridge(projection, _repository, Reload.Token);
+                    var initial = await projection.RefreshAsync(repository.Value.Id, Reload.Token);
+                    if (initial.IsFailure && !Reload.IsCancellationRequested)
+                    {
+                        _initialStatusError = initial.Error;
+                        UnityChangeBridge.Hint("Assets/"); // retry on next Editor update
+                    }
+                }
             }
             catch (System.OperationCanceledException) { /* Domain reload. */ }
             catch (System.IO.IOException) { /* Cache unavailable; remain Setup Required. */ }
@@ -60,6 +85,11 @@ namespace Lore.Unity.Integration.EditorLifecycle
         private static void OnBeforeReload()
         {
             AssemblyReloadEvents.beforeAssemblyReload -= OnBeforeReload;
+            _changes?.Dispose();
+            _changes = null;
+            _projection = null;
+            _repository = null;
+            _initialStatusError = null;
             Reload.Cancel();
             EditorApplication.delayCall -= OnEditorReady;
             _composition = null;
