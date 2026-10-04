@@ -16,6 +16,8 @@ namespace Lore.Unity.Integration.Assets
         private readonly string _projectPrefix;
         private readonly StringComparison _comparison;
 
+        public string AssetRootPrefix => _projectPrefix + "Assets/";
+
         public UnityAssetPathMapper(AbsolutePath projectRoot, AbsolutePath repositoryRoot)
         {
             if (string.IsNullOrEmpty(projectRoot.Value) || string.IsNullOrEmpty(repositoryRoot.Value))

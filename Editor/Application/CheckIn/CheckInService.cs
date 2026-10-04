@@ -50,7 +50,7 @@ namespace Lore.Unity.Application.CheckIn
                 var logical = new HashSet<RepositoryPath>();
                 foreach (var path in plan.Paths)
                 {
-                    if (!path.Value.StartsWith("Assets/", StringComparison.Ordinal))
+                    if (!path.Value.StartsWith(plan.AssetRootPrefix, StringComparison.Ordinal))
                     {
                         selected.Add(path);
                         logical.Add(path);
@@ -72,7 +72,7 @@ namespace Lore.Unity.Application.CheckIn
                     if (selected.Contains(entry.Path) && entry.Status.Working != WorkingState.Unchanged)
                     {
                         changes.Add(entry.Path);
-                        var asset = entry.Path.Value.StartsWith("Assets/", StringComparison.Ordinal) &&
+                        var asset = entry.Path.Value.StartsWith(plan.AssetRootPrefix, StringComparison.Ordinal) &&
                             entry.Path.Value.EndsWith(".meta", StringComparison.Ordinal)
                             ? new RepositoryPath(entry.Path.Value.Substring(0, entry.Path.Value.Length - ".meta".Length))
                             : entry.Path;

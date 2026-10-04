@@ -16,8 +16,9 @@ namespace Lore.Unity.Tests.Integration
         private sealed class Guids : IUnityGuidLookup
         {
             public bool Duplicate;
+            public bool Invalid;
             public string AssetPathToGuid(UnityAssetPath path) => path.Value == "Assets/Scene.unity" ||
-                (Duplicate && path.Value == "Assets/Other.prefab") ? new string('a', 32) : string.Empty;
+                (Duplicate && path.Value == "Assets/Other.prefab") ? Invalid ? "invalid" : new string('a', 32) : string.Empty;
             public string GuidToAssetPath(string guid) => "Assets/Scene.unity";
         }
 
@@ -67,6 +68,8 @@ namespace Lore.Unity.Tests.Integration
             var input = BuildInput(true);
             Assert.That(UnityLogicalAssetIndex.Build(input.status, input.mapper,
                 new Guids { Duplicate = true }).IsFailure, Is.True);
+            Assert.That(UnityLogicalAssetIndex.Build(input.status, input.mapper,
+                new Guids { Invalid = true }).IsFailure, Is.True);
         }
 
         [Test]
@@ -76,6 +79,22 @@ namespace Lore.Unity.Tests.Integration
             var resolver = new UnityAssetSelectionResolver(new Guids(), input.mapper);
             Assert.That(resolver.ResolveGuid(new string('a', 32)).Value.Value, Is.EqualTo("Assets/Scene.unity"));
             Assert.That(resolver.ResolveGuid("not-a-guid").IsFailure, Is.True);
+        }
+
+        [Test]
+        public void SelectionBuilderUsesNestedAssetRootForCheckIn()
+        {
+            var root = Path.Combine(Path.GetTempPath(), "lore-select-" + Guid.NewGuid().ToString("N"));
+            var mapper = new UnityAssetPathMapper(new AbsolutePath(Path.Combine(root, "Game")),
+                new AbsolutePath(root));
+            var resolver = new UnityAssetSelectionResolver(new Guids(), mapper);
+            var selection = new[] { new UnityAssetPath("Assets/Scene.unity"),
+                new UnityAssetPath("Assets/Scene.unity.meta"),
+                new UnityAssetPath("ProjectSettings/ProjectSettings.asset") };
+            var plan = resolver.CreateCheckInPlan(new RepositoryId("repo"), selection, "Message", true);
+            Assert.That(plan.IsSuccess, Is.True);
+            Assert.That(plan.Value.Paths.Count, Is.EqualTo(2));
+            Assert.That(plan.Value.AssetRootPrefix, Is.EqualTo("Game/Assets/"));
         }
     }
 }

@@ -113,6 +113,11 @@ namespace Lore.Unity.Integration.Assets
             foreach (var pair in grouped)
             {
                 var guid = guids.AssetPathToGuid(pair.Key);
+                if (!string.IsNullOrEmpty(guid))
+                {
+                    if (guid.Length != 32) return Invalid();
+                    foreach (var c in guid) if (!Uri.IsHexDigit(c)) return Invalid();
+                }
                 var asset = new UnityLogicalAsset(pair.Key, string.IsNullOrEmpty(guid) ? null : guid,
                     pair.Value.asset, pair.Value.meta);
                 if (asset.Guid != null && !byGuid.TryAdd(asset.Guid, asset)) return Invalid();

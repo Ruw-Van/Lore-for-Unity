@@ -18,6 +18,7 @@ namespace Lore.Unity.Tests.Integration
         public void ConvertsPathsWhenProjectIsNestedUnderRepository()
         {
             var mapper = Nested();
+            Assert.That(mapper.AssetRootPrefix, Is.EqualTo("Game/Assets/"));
             var path = mapper.ToRepositoryPath(new UnityAssetPath("Assets/Scene.unity.meta"));
             Assert.That(path.Value.Value, Is.EqualTo("Game/Assets/Scene.unity.meta"));
             Assert.That(mapper.ToUnityPath(path.Value).Value.Value, Is.EqualTo("Assets/Scene.unity.meta"));

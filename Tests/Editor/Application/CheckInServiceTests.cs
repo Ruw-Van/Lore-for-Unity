@@ -35,6 +35,7 @@ namespace Lore.Unity.Tests.Application
             public bool UnrelatedStaged;
             public bool MetaChanged;
             public bool MetaOnly;
+            public string Prefix = "Assets/";
             public bool PostCommitStatusFails;
             public int Commits;
             public IReadOnlyList<RepositoryPath> StagedPaths;
@@ -49,8 +50,8 @@ namespace Lore.Unity.Tests.Application
                     Staged && !VerifyFails ? StageState.Staged : StageState.Unstaged,
                     LockState.Unknown, ConflictState.None, RemoteState.Unknown);
                 var entries = new List<FileStatusEntry>();
-                if (!MetaOnly) entries.Add(new FileStatusEntry(new RepositoryPath("Assets/a.txt"), status));
-                if (MetaChanged || MetaOnly) entries.Add(new FileStatusEntry(new RepositoryPath("Assets/a.txt.meta"), status));
+                if (!MetaOnly) entries.Add(new FileStatusEntry(new RepositoryPath(Prefix + "a.txt"), status));
+                if (MetaChanged || MetaOnly) entries.Add(new FileStatusEntry(new RepositoryPath(Prefix + "a.txt.meta"), status));
                 if (UnrelatedStaged && paths.Count == 0)
                     entries.Add(new FileStatusEntry(new RepositoryPath("Assets/other.txt"),
                         new FileStatus(WorkingState.Modified, StageState.Staged,
@@ -174,6 +175,17 @@ namespace Lore.Unity.Tests.Application
             Assert.That(outcome.IsCommitted, Is.True);
             Assert.That(outcome.PostCommitStatus.Value.IsFailure, Is.True);
             Assert.That(outcome.Push.HasValue, Is.False);
+        }
+
+        [Test]
+        public void NestedUnityProjectStillPairsAssetAndMeta()
+        {
+            var fake = new Fake { Prefix = "Game/Assets/", MetaChanged = true };
+            var plan = new CheckInPlan(new RepositoryId("repo"),
+                new[] { new RepositoryPath("Game/Assets/a.txt") }, "Message", false, "Game/Assets/");
+            var result = Service(fake).ExecuteAsync(plan, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.That(result.IsCommitted, Is.True);
+            Assert.That(fake.StagedPaths.Count, Is.EqualTo(2));
         }
     }
 }

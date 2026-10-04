@@ -36,11 +36,15 @@ namespace Lore.Unity.Application.Operations
     public sealed class CheckInPlan
     {
         public CheckInPlan(RepositoryId repository, IReadOnlyList<RepositoryPath> selectedPaths,
-            string message, bool pushAfterCommit)
+            string message, bool pushAfterCommit, string assetRootPrefix = "Assets/")
         {
             Repository = repository ?? throw new ArgumentNullException(nameof(repository));
             if (selectedPaths == null || selectedPaths.Count == 0) throw new ArgumentException("Files required.", nameof(selectedPaths));
             if (string.IsNullOrWhiteSpace(message)) throw new ArgumentException("Message required.", nameof(message));
+            if (string.IsNullOrEmpty(assetRootPrefix) || !assetRootPrefix.EndsWith("Assets/", StringComparison.Ordinal))
+                throw new ArgumentException("Repository-relative Unity Asset root required.", nameof(assetRootPrefix));
+            if (assetRootPrefix != "Assets/")
+                _ = new RepositoryPath(assetRootPrefix.Substring(0, assetRootPrefix.Length - 1));
             var unique = new HashSet<RepositoryPath>();
             foreach (var path in selectedPaths)
                 if (string.IsNullOrEmpty(path.Value) || !unique.Add(path))
@@ -48,11 +52,13 @@ namespace Lore.Unity.Application.Operations
             Paths = new ReadOnlyCollection<RepositoryPath>(new List<RepositoryPath>(selectedPaths));
             Message = message;
             PushAfterCommit = pushAfterCommit;
+            AssetRootPrefix = assetRootPrefix;
         }
         public RepositoryId Repository { get; }
         public IReadOnlyList<RepositoryPath> Paths { get; }
         public string Message { get; }
         public bool PushAfterCommit { get; }
+        public string AssetRootPrefix { get; }
     }
 
     public sealed class CheckInOutcome

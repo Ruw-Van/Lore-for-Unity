@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
+using Lore.Unity.Application.Operations;
+using Lore.Unity.Core.Identifiers;
 using Lore.Unity.Core.Errors;
 using Lore.Unity.Core.Paths;
 using Lore.Unity.Core.Results;
@@ -61,6 +64,36 @@ namespace Lore.Unity.Integration.Assets
                 return Invalid();
             try { return _paths.ToRepositoryPath(new UnityAssetPath(path)); }
             catch (ArgumentException) { return Invalid(); }
+        }
+
+        public Result<CheckInPlan> CreateCheckInPlan(RepositoryId repository,
+            IReadOnlyList<UnityAssetPath> selection, string message, bool pushAfterCommit)
+        {
+            if (repository == null) throw new ArgumentNullException(nameof(repository));
+            if (selection == null) throw new ArgumentNullException(nameof(selection));
+            var paths = new List<RepositoryPath>();
+            var seen = new HashSet<RepositoryPath>();
+            foreach (var item in selection)
+            {
+                var value = item.Value;
+                if (string.IsNullOrEmpty(value)) return Result<CheckInPlan>.Failure(Invalid().Error);
+                if (value.StartsWith("Assets/", StringComparison.Ordinal) &&
+                    value.EndsWith(".meta", StringComparison.Ordinal))
+                    value = value.Substring(0, value.Length - ".meta".Length);
+                var mapped = _paths.ToRepositoryPath(new UnityAssetPath(value));
+                if (mapped.IsFailure) return Result<CheckInPlan>.Failure(mapped.Error);
+                if (seen.Add(mapped.Value)) paths.Add(mapped.Value);
+            }
+            try
+            {
+                return Result<CheckInPlan>.Success(new CheckInPlan(repository, paths,
+                    message, pushAfterCommit, _paths.AssetRootPrefix));
+            }
+            catch (ArgumentException)
+            {
+                return Result<CheckInPlan>.Failure(new LoreError(ErrorCode.ValidationFailed,
+                    "Invalid Check In selection or message."));
+            }
         }
 
         private static Result<RepositoryPath> Invalid() => Result<RepositoryPath>.Failure(
