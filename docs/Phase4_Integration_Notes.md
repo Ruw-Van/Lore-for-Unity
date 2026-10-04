@@ -8,3 +8,4 @@
 - 書き込み接続は `LoreBootstrap.EnableEditingAsync` を明示的に呼ぶ場合だけ有効化し、Recovery Journal の未完了記録があれば拒否する。まだ UI からは呼ばない。
 - Unity Project が Lore Repository の内側にある場合は `AssetRootPrefix` を Check In Plan に渡し、`Game/Assets/...` とその `.meta` を一組にする。
 - Unity Test Runner と macOS arm64 実機は未確認。外部スタブの C# 9.0 ビルド／テストは Unity での検証を代替しない。
+- Sync／Branch Switch 前には未保存 Scene、無名 Scene、Prefab Mode を拒否する。Lore 書き込み後は AssetDatabase を同期更新し、変更されていない Scene 構成だけ再読み込みする。Unity の import／compile が安定するまで Editor update を待ち、途中で状態が変わるか時間切れなら Recovery Journal を未完了に保つ。Unity 実機での Scene 再読込・Domain Reload 挙動の検証は残る。

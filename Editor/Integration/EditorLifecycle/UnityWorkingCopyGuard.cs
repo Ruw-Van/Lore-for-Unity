@@ -18,6 +18,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
     {
         private readonly int _mainThread;
         private readonly SynchronizationContext _editorContext;
+        private SceneSetup[] _sceneSetup;
 
         public UnityWorkingCopyGuard()
         {
@@ -32,24 +33,84 @@ namespace Lore.Unity.Integration.EditorLifecycle
         {
             if (repository == null) throw new ArgumentNullException(nameof(repository));
             token.ThrowIfCancellationRequested();
-            return Task.FromResult(CheckState());
+            var state = CheckState();
+            if (state.IsFailure) return Task.FromResult(state);
+            if (PrefabStageUtility.GetCurrentPrefabStage() != null)
+                return Task.FromResult(Fail("Close Prefab Mode before writing to the working copy."));
+            for (var i = 0; i < SceneManager.sceneCount; i++)
+                if (string.IsNullOrEmpty(SceneManager.GetSceneAt(i).path))
+                    return Task.FromResult(Fail("Save or close untitled scenes before writing to the working copy."));
+            _sceneSetup = EditorSceneManager.GetSceneManagerSetup();
+            return Task.FromResult(Result.Success());
         }
 
-        public Task<Result> ValidateAfterWriteAsync(RepositoryId repository, CancellationToken token)
+        public async Task<Result> ValidateAfterWriteAsync(RepositoryId repository, CancellationToken token)
         {
             if (repository == null) throw new ArgumentNullException(nameof(repository));
             token.ThrowIfCancellationRequested();
             var beforeRefresh = CheckState();
-            if (beforeRefresh.IsFailure) return Task.FromResult(beforeRefresh);
+            if (beforeRefresh.IsFailure) return beforeRefresh;
+            if (_sceneSetup == null || PrefabStageUtility.GetCurrentPrefabStage() != null ||
+                !SameSetup(_sceneSetup, EditorSceneManager.GetSceneManagerSetup()))
+                return Fail("Open scenes or Prefab Mode changed while Lore was writing.");
             try
             {
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-                return Task.FromResult(CheckState());
+                var afterImport = CheckState();
+                if (afterImport.IsFailure) return afterImport;
+                if (!SameSetup(_sceneSetup, EditorSceneManager.GetSceneManagerSetup()))
+                    return Fail("Unity scene setup changed during import.");
+                // Only reload clean, named scenes. This must not replace edits
+                // created while Lore was running; CheckState just verified that.
+                EditorSceneManager.RestoreSceneManagerSetup(_sceneSetup);
+                var reloaded = CheckState();
+                if (reloaded.IsFailure || !SameSetup(_sceneSetup, EditorSceneManager.GetSceneManagerSetup()))
+                    return Fail("Unity scene reload could not be validated.");
+                var stable = await WaitForStableEditorAsync(token);
+                if (stable.IsFailure || !SameSetup(_sceneSetup, EditorSceneManager.GetSceneManagerSetup()))
+                    return Fail("Unity compilation, import, or scene state did not stabilize.");
+                _sceneSetup = null;
+                return Result.Success();
             }
             catch (Exception e)
             {
-                return Task.FromResult(Fail("Unity import could not be completed: " + e.GetType().Name));
+                return Fail("Unity import could not be completed: " + e.GetType().Name);
             }
+        }
+
+        private Task<Result> WaitForStableEditorAsync(CancellationToken token)
+        {
+            var completion = new TaskCompletionSource<Result>();
+            var started = EditorApplication.timeSinceStartup;
+            var stableFrames = 0;
+            void OnUpdate()
+            {
+                if (token.IsCancellationRequested || EditorApplication.timeSinceStartup - started > 30)
+                {
+                    EditorApplication.update -= OnUpdate;
+                    completion.TrySetResult(Fail("Unity import stabilization timed out or was cancelled."));
+                    return;
+                }
+                if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+                {
+                    stableFrames = 0;
+                    return;
+                }
+                if (++stableFrames < 2) return;
+                EditorApplication.update -= OnUpdate;
+                completion.TrySetResult(CheckState());
+            }
+            EditorApplication.update += OnUpdate;
+            return completion.Task;
+        }
+
+        private static bool SameSetup(SceneSetup[] expected, SceneSetup[] current)
+        {
+            if (expected == null || current == null || expected.Length != current.Length) return false;
+            for (var i = 0; i < expected.Length; i++)
+                if (expected[i].path != current[i].path || expected[i].isLoaded != current[i].isLoaded ||
+                    expected[i].isActive != current[i].isActive) return false;
+            return true;
         }
 
         private Result CheckState()
