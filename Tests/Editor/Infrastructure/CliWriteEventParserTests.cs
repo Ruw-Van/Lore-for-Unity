@@ -29,5 +29,19 @@ namespace Lore.Unity.Tests.Infrastructure
                 "{\"tagName\":\"complete\",\"data\":{\"status\":0}}\n" +
                 "{\"tagName\":\"log\",\"data\":{}}\n").IsFailure, Is.True);
         }
+
+        [Test]
+        public void LocalCommitFollowedByRelayFailureIsNotReportedAsSuccessfulCommit()
+        {
+            // v0.10.0 can emit a local commit completion followed by a second,
+            // failing relay completion even when --offline was supplied.
+            var id = new RepositoryId(new string('a', 32));
+            var events = "{\"tagName\":\"revisionCommitRevision\",\"data\":{\"repository\":\"" +
+                id.Value + "\",\"revision\":\"" + new string('b', 64) + "\"}}\n" +
+                "{\"tagName\":\"complete\",\"data\":{\"status\":0}}\n" +
+                "{\"tagName\":\"log\",\"data\":{}}\n" +
+                "{\"tagName\":\"complete\",\"data\":{\"status\":111}}\n";
+            Assert.That(new CliWriteEventParser().Commit(id, events).IsFailure, Is.True);
+        }
     }
 }

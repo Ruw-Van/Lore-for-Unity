@@ -1,3 +1,5 @@
+using System;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using Lore.Unity.Application.Operations;
@@ -5,6 +7,8 @@ using Lore.Unity.Core.Errors;
 using Lore.Unity.Core.Identifiers;
 using Lore.Unity.Core.Results;
 using Lore.Unity.Infrastructure.Backend;
+using Lore.Unity.Infrastructure.Recovery;
+using Lore.Unity.Core.Paths;
 using NUnit.Framework;
 
 namespace Lore.Unity.Tests.Application
@@ -56,6 +60,28 @@ namespace Lore.Unity.Tests.Application
             Assert.That(outcome.LoreApplied, Is.True);
             Assert.That(outcome.Result.IsFailure, Is.True);
             Assert.That(journal.Boundaries, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void FailedLoreWriteRemainsPendingAcrossJournalRestart()
+        {
+            var path = Path.Combine(Path.GetTempPath(), "lore-operation-test-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var root = new AbsolutePath(path);
+                var repository = new RepositoryId(new string('c', 32));
+                var journal = new FileRecoveryJournal(root);
+                var operation = new WorkingCopyOperation(new RepositoryOperationGate(), new Guard(), journal);
+                var result = operation.ExecuteAsync(repository, "Sync", token =>
+                    Task.FromResult(Result.Failure(new LoreError(ErrorCode.Unknown, "Unknown write outcome."))),
+                    CancellationToken.None).GetAwaiter().GetResult();
+                Assert.That(result.Result.IsFailure, Is.True);
+                var pending = new FileRecoveryJournal(root).Pending().Value;
+                Assert.That(pending.Count, Is.EqualTo(1));
+                Assert.That(pending[0].Id, Is.EqualTo(result.Id));
+                Assert.That(pending[0].LoreApplied, Is.False);
+            }
+            finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
         }
     }
 }
