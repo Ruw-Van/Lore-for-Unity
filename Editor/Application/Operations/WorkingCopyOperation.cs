@@ -16,12 +16,15 @@ namespace Lore.Unity.Application.Operations
         private readonly IRepositoryOperationGate _gate;
         private readonly IWorkingCopyGuard _guard;
         private readonly IRecoveryJournal _journal;
+        private readonly IWorkingCopyStatusVerifier _status;
 
-        public WorkingCopyOperation(IRepositoryOperationGate gate, IWorkingCopyGuard guard, IRecoveryJournal journal)
+        public WorkingCopyOperation(IRepositoryOperationGate gate, IWorkingCopyGuard guard,
+            IRecoveryJournal journal, IWorkingCopyStatusVerifier status)
         {
             _gate = gate ?? throw new ArgumentNullException(nameof(gate));
             _guard = guard ?? throw new ArgumentNullException(nameof(guard));
             _journal = journal ?? throw new ArgumentNullException(nameof(journal));
+            _status = status ?? throw new ArgumentNullException(nameof(status));
         }
 
         public async Task<WriteOutcome> ExecuteAsync(RepositoryId repository, string operation,
@@ -50,6 +53,8 @@ namespace Lore.Unity.Application.Operations
                 if (marked.IsFailure) return new WriteOutcome(id, marked, OperationState.Failed, true);
                 var unity = await _guard.ValidateAfterWriteAsync(repository, CancellationToken.None);
                 if (unity.IsFailure) return new WriteOutcome(id, unity, OperationState.Failed, true);
+                var verified = await _status.VerifyUnderLeaseAsync(repository, CancellationToken.None);
+                if (verified.IsFailure) return new WriteOutcome(id, verified, OperationState.Failed, true);
                 var complete = await _journal.CompleteAsync(id, CancellationToken.None);
                 return new WriteOutcome(id, complete,
                     complete.IsSuccess ? OperationState.Completed : OperationState.Failed, true);

@@ -3,7 +3,10 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Lore.Unity.Application.Runtime;
+using Lore.Unity.Application.Operations;
+using Lore.Unity.Core.Results;
 using Lore.Unity.Infrastructure.Backend;
+using Lore.Unity.Infrastructure.Recovery;
 using Lore.Unity.Infrastructure.Runtime;
 
 namespace Lore.Unity.Integration.EditorLifecycle
@@ -25,6 +28,14 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public RuntimeContext Context { get; }
         public LoreRuntimeManager Manager { get; }
         public ReadBackendComposition Reads { get; }
+
+        public Result<WriteBackendComposition> CreateWrites(IWorkingCopyGuard guard, FileRecoveryJournal journal)
+        {
+            if (Context.Availability != RuntimeAvailability.Ready || Reads == null)
+                return Result<WriteBackendComposition>.Failure(new Lore.Unity.Core.Errors.LoreError(
+                    Lore.Unity.Core.Errors.ErrorCode.RuntimeMissing, "Verified Lore runtime is required."));
+            return Reads.CreateWrites(guard, journal);
+        }
 
         public static string CurrentPlatform()
         {

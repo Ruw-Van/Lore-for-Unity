@@ -3,12 +3,27 @@ using Lore.Unity.Integration.EditorLifecycle;
 using Lore.Unity.Infrastructure.Runtime;
 using Lore.Unity.Infrastructure.Backend;
 using Lore.Unity.Application.Backend;
+using Lore.Unity.Application.Operations;
+using Lore.Unity.Core.Identifiers;
+using Lore.Unity.Core.Paths;
+using Lore.Unity.Core.Results;
+using Lore.Unity.Infrastructure.Recovery;
+using System.Threading;
+using System.Threading.Tasks;
 using NUnit.Framework;
 
 namespace Lore.Unity.Tests.Integration
 {
     public sealed class RuntimeCompositionTests
     {
+        private sealed class Guard : IWorkingCopyGuard
+        {
+            public Task<Result> ValidateBeforeWriteAsync(RepositoryId repository, CancellationToken token) =>
+                Task.FromResult(Result.Success());
+            public Task<Result> ValidateAfterWriteAsync(RepositoryId repository, CancellationToken token) =>
+                Task.FromResult(Result.Success());
+        }
+
         [Test]
         public void MissingManifestDoesNotActivateRuntime()
         {
@@ -49,6 +64,15 @@ namespace Lore.Unity.Tests.Integration
             var composition = ReadBackendComposition.Create(null, null, new RepositoryOperationGate());
             Assert.That(composition.CreateDetector() == null, Is.True);
             Assert.That(composition.Session.ResolveStatus().IsFailure, Is.True);
+        }
+
+        [Test]
+        public void UnverifiedRuntimeCannotCreateWriteServices()
+        {
+            var context = RuntimeComposition.Create(null, "Windows-x64");
+            var journal = new FileRecoveryJournal(new AbsolutePath(System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(), "no-journal-" + System.Guid.NewGuid().ToString("N"))));
+            Assert.That(context.CreateWrites(new Guard(), journal).IsFailure, Is.True);
         }
     }
 }

@@ -43,5 +43,28 @@ namespace Lore.Unity.Tests.Infrastructure
                 "{\"tagName\":\"complete\",\"data\":{\"status\":111}}\n";
             Assert.That(new CliWriteEventParser().Commit(id, events).IsFailure, Is.True);
         }
+
+        [Test]
+        public void SyncRequiresMatchingRepositoryTarget()
+        {
+            var id = new RepositoryId(new string('a', 32));
+            var target = "{\"tagName\":\"revisionSyncTarget\",\"data\":{\"repository\":\"" +
+                id.Value + "\",\"targetRevision\":\"" + new string('b', 64) + "\"}}\n";
+            var done = "{\"tagName\":\"complete\",\"data\":{\"status\":0}}\n";
+            Assert.That(new CliWriteEventParser().Sync(id, target + done).IsSuccess, Is.True);
+            Assert.That(new CliWriteEventParser().Sync(new RepositoryId(new string('c', 32)), target + done).IsFailure, Is.True);
+            Assert.That(new CliWriteEventParser().Sync(id, done).IsFailure, Is.True);
+        }
+
+        [Test]
+        public void BranchSwitchRequiresEndForRequestedBranch()
+        {
+            var begin = "{\"tagName\":\"branchSwitchBegin\",\"data\":{}}\n";
+            var end = "{\"tagName\":\"branchSwitchEnd\",\"data\":{\"branch\":{\"name\":\"main\"}}}\n";
+            var done = "{\"tagName\":\"complete\",\"data\":{\"status\":0}}\n";
+            Assert.That(new CliWriteEventParser().BranchSwitch(new BranchName("main"), begin + end + done).IsSuccess, Is.True);
+            Assert.That(new CliWriteEventParser().BranchSwitch(new BranchName("other"), begin + end + done).IsFailure, Is.True);
+            Assert.That(new CliWriteEventParser().BranchSwitch(new BranchName("main"), begin + done).IsFailure, Is.True);
+        }
     }
 }

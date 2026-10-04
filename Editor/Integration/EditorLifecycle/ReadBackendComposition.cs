@@ -1,9 +1,12 @@
 using Lore.Unity.Application.Backend;
 using Lore.Unity.Application.Status;
+using Lore.Unity.Application.Operations;
 using Lore.Unity.Core.Paths;
+using Lore.Unity.Core.Results;
 using Lore.Unity.Infrastructure.Backend;
 using Lore.Unity.Infrastructure.LoreCli;
 using Lore.Unity.Infrastructure.LoreSdk;
+using Lore.Unity.Infrastructure.Recovery;
 using Lore.Unity.Infrastructure.Repository;
 
 namespace Lore.Unity.Integration.EditorLifecycle
@@ -12,16 +15,44 @@ namespace Lore.Unity.Integration.EditorLifecycle
     // Missing adapters are not advertised. No static service locator is used.
     public sealed class ReadBackendComposition
     {
-        private ReadBackendComposition(BackendSession session, StatusStore store)
+        private readonly CliReadAdapter _cliRead;
+        private readonly LoreCliRunner _runner;
+        private readonly RepositoryLocations _roots;
+        private readonly IRepositoryOperationGate _gate;
+
+        private ReadBackendComposition(BackendSession session, StatusStore store,
+            CliReadAdapter cliRead, LoreCliRunner runner, RepositoryLocations roots, IRepositoryOperationGate gate)
         {
             Session = session;
             Status = new StatusReader(session, store);
             Store = store;
+            _cliRead = cliRead;
+            _runner = runner;
+            _roots = roots;
+            _gate = gate;
         }
 
         public BackendSession Session { get; }
         public StatusReader Status { get; }
         public StatusStore Store { get; }
+
+        // Not invoked at Editor startup. A caller must provide safety/recovery
+        // dependencies explicitly; an incomplete journal prevents activation.
+        internal Result<WriteBackendComposition> CreateWrites(IWorkingCopyGuard guard, FileRecoveryJournal journal)
+        {
+            if (guard == null || journal == null) throw new System.ArgumentNullException(
+                guard == null ? nameof(guard) : nameof(journal));
+            if (_cliRead == null || _runner == null || _roots == null || _gate == null)
+                return Result<WriteBackendComposition>.Failure(new Lore.Unity.Core.Errors.LoreError(
+                    Lore.Unity.Core.Errors.ErrorCode.UnsupportedOperation, "No verified CLI write backend is available."));
+            var pending = journal.Pending();
+            if (pending.IsFailure) return Result<WriteBackendComposition>.Failure(pending.Error);
+            if (pending.Value.Count != 0)
+                return Result<WriteBackendComposition>.Failure(new Lore.Unity.Core.Errors.LoreError(
+                    Lore.Unity.Core.Errors.ErrorCode.ValidationFailed, "Unresolved working copy operations block writes."));
+            return Result<WriteBackendComposition>.Success(new WriteBackendComposition(_cliRead, _runner,
+                _roots, _gate, guard, journal, Store));
+        }
 
         public RepositoryDetector CreateDetector()
         {
@@ -34,12 +65,19 @@ namespace Lore.Unity.Integration.EditorLifecycle
         {
             IBackendSet sdk = sdkBridge != null && sdkBridge.IsAvailable
                 ? new ReadSet(new SdkReadAdapter(sdkBridge)) : null;
-            IBackendSet cli = verifiedCliExecutable.HasValue && gate != null
-                ? new ReadSet(new CliReadAdapter(new LoreCliRunner(verifiedCliExecutable.Value),
-                    new CliStatusParser(), gate)) : null;
+            LoreCliRunner runner = null;
+            RepositoryLocations roots = null;
+            CliReadAdapter cliRead = null;
+            if (verifiedCliExecutable.HasValue && gate != null)
+            {
+                runner = new LoreCliRunner(verifiedCliExecutable.Value);
+                roots = new RepositoryLocations();
+                cliRead = new CliReadAdapter(runner, new CliStatusParser(), gate, roots);
+            }
+            IBackendSet cli = cliRead == null ? null : new ReadSet(cliRead);
             var provider = new AvailableCapabilities(sdk, cli);
             var session = new BackendSession(new BackendResolver(provider), sdk, cli);
-            return new ReadBackendComposition(session, new StatusStore());
+            return new ReadBackendComposition(session, new StatusStore(), cliRead, runner, roots, gate);
         }
 
         private sealed class ReadSet : IBackendSet

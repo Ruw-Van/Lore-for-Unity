@@ -25,6 +25,8 @@ namespace Lore.Unity.Infrastructure.LoreCli
             [DataMember(Name = "revision")] public string Revision { get; set; }
             [DataMember(Name = "repository")] public string Repository { get; set; }
             [DataMember(Name = "name")] public string Name { get; set; }
+            [DataMember(Name = "branch")] public Data Branch { get; set; }
+            [DataMember(Name = "targetRevision")] public string TargetRevision { get; set; }
         }
 
         public Result Verify(string text)
@@ -50,6 +52,45 @@ namespace Lore.Unity.Infrastructure.LoreCli
                 }
             return signature == null ? Invalid<RevisionSignature>() :
                 Result<RevisionSignature>.Success(new RevisionSignature(signature));
+        }
+
+        public Result Sync(RepositoryId repository, string text)
+        {
+            if (repository == null) throw new ArgumentNullException(nameof(repository));
+            var events = Read(text);
+            if (events.IsFailure) return Result.Failure(events.Error);
+            var complete = Complete(events.Value);
+            if (complete.IsFailure) return complete;
+            var count = 0;
+            foreach (var item in events.Value)
+                if (item.Tag == "revisionSyncTarget")
+                {
+                    if (++count != 1 || item.Data?.Repository != repository.Value ||
+                        !Hex(item.Data.TargetRevision, 64))
+                        return Invalid();
+                }
+            return count == 1 ? Result.Success() : Invalid();
+        }
+
+        public Result BranchSwitch(BranchName branch, string text)
+        {
+            if (branch == null) throw new ArgumentNullException(nameof(branch));
+            var events = Read(text);
+            if (events.IsFailure) return Result.Failure(events.Error);
+            var complete = Complete(events.Value);
+            if (complete.IsFailure) return complete;
+            var begin = 0;
+            var end = 0;
+            foreach (var item in events.Value)
+            {
+                if (item.Tag == "branchSwitchBegin") begin++;
+                if (item.Tag == "branchSwitchEnd")
+                {
+                    end++;
+                    if (item.Data?.Branch?.Name != branch.Value) return Invalid();
+                }
+            }
+            return begin == 1 && end == 1 ? Result.Success() : Invalid();
         }
 
         public Result<IReadOnlyList<BranchName>> Branches(string text)
@@ -119,6 +160,8 @@ namespace Lore.Unity.Infrastructure.LoreCli
         }
 
         private static Result<T> Invalid<T>() => Result<T>.Failure(new LoreError(ErrorCode.ValidationFailed,
+            "Lore CLI returned an invalid write event stream."));
+        private static Result Invalid() => Result.Failure(new LoreError(ErrorCode.ValidationFailed,
             "Lore CLI returned an invalid write event stream."));
     }
 }

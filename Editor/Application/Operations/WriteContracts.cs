@@ -27,19 +27,25 @@ namespace Lore.Unity.Application.Operations
         Task<Result> CompleteAsync(OperationId id, CancellationToken token);
     }
 
+    public interface IWorkingCopyStatusVerifier
+    {
+        // Invoked while the repository lease is held, after Unity import.
+        Task<Result> VerifyUnderLeaseAsync(RepositoryId repository, CancellationToken token);
+    }
+
     public sealed class CheckInPlan
     {
-        public CheckInPlan(RepositoryId repository, IReadOnlyList<RepositoryPath> expandedPaths,
+        public CheckInPlan(RepositoryId repository, IReadOnlyList<RepositoryPath> selectedPaths,
             string message, bool pushAfterCommit)
         {
             Repository = repository ?? throw new ArgumentNullException(nameof(repository));
-            if (expandedPaths == null || expandedPaths.Count == 0) throw new ArgumentException("Files required.", nameof(expandedPaths));
+            if (selectedPaths == null || selectedPaths.Count == 0) throw new ArgumentException("Files required.", nameof(selectedPaths));
             if (string.IsNullOrWhiteSpace(message)) throw new ArgumentException("Message required.", nameof(message));
             var unique = new HashSet<RepositoryPath>();
-            foreach (var path in expandedPaths)
+            foreach (var path in selectedPaths)
                 if (string.IsNullOrEmpty(path.Value) || !unique.Add(path))
-                    throw new ArgumentException("Invalid or duplicate path.", nameof(expandedPaths));
-            Paths = new ReadOnlyCollection<RepositoryPath>(new List<RepositoryPath>(expandedPaths));
+                    throw new ArgumentException("Invalid or duplicate path.", nameof(selectedPaths));
+            Paths = new ReadOnlyCollection<RepositoryPath>(new List<RepositoryPath>(selectedPaths));
             Message = message;
             PushAfterCommit = pushAfterCommit;
         }
@@ -52,13 +58,15 @@ namespace Lore.Unity.Application.Operations
     public sealed class CheckInOutcome
     {
         public CheckInOutcome(OperationId id, Result<RevisionSignature> commit,
-            Result? push, OperationState state, bool commitOutcomeUnknown = false)
+            Result? push, OperationState state, bool commitOutcomeUnknown = false,
+            Result? postCommitStatus = null)
         {
             Id = id ?? throw new ArgumentNullException(nameof(id));
             Commit = commit;
             Push = push;
             State = state;
             CommitOutcomeUnknown = commitOutcomeUnknown;
+            PostCommitStatus = postCommitStatus;
         }
         public OperationId Id { get; }
         public Result<RevisionSignature> Commit { get; }
@@ -66,6 +74,7 @@ namespace Lore.Unity.Application.Operations
         public OperationState State { get; }
         public bool IsCommitted => Commit.IsSuccess;
         public bool CommitOutcomeUnknown { get; }
+        public Result? PostCommitStatus { get; }
     }
 
     public sealed class WriteOutcome

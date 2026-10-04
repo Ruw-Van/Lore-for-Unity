@@ -33,15 +33,24 @@ namespace Lore.Unity.Tests.Application
             public bool CommitCancelled;
             public bool CommitFailed;
             public bool UnrelatedStaged;
+            public bool MetaChanged;
+            public bool MetaOnly;
+            public bool PostCommitStatusFails;
             public int Commits;
+            public IReadOnlyList<RepositoryPath> StagedPaths;
             public Task<Result<IReadOnlyList<FileStatusEntry>>> ReadAsync(RepositoryId id,
                 IReadOnlyList<RepositoryPath> paths, CancellationToken token)
             {
                 Reads++;
+                if (PostCommitStatusFails && Commits > 0)
+                    return Task.FromResult(Result<IReadOnlyList<FileStatusEntry>>.Failure(
+                        new LoreError(ErrorCode.ValidationFailed, "Cannot refresh status.")));
                 var status = new FileStatus(WorkingState.Modified,
                     Staged && !VerifyFails ? StageState.Staged : StageState.Unstaged,
                     LockState.Unknown, ConflictState.None, RemoteState.Unknown);
-                var entries = new List<FileStatusEntry> { new FileStatusEntry(new RepositoryPath("Assets/a.txt"), status) };
+                var entries = new List<FileStatusEntry>();
+                if (!MetaOnly) entries.Add(new FileStatusEntry(new RepositoryPath("Assets/a.txt"), status));
+                if (MetaChanged || MetaOnly) entries.Add(new FileStatusEntry(new RepositoryPath("Assets/a.txt.meta"), status));
                 if (UnrelatedStaged && paths.Count == 0)
                     entries.Add(new FileStatusEntry(new RepositoryPath("Assets/other.txt"),
                         new FileStatus(WorkingState.Modified, StageState.Staged,
@@ -49,13 +58,14 @@ namespace Lore.Unity.Tests.Application
                 return Task.FromResult(Result<IReadOnlyList<FileStatusEntry>>.Success(entries));
             }
             public Task<Result> StageAsync(RepositoryId id, IReadOnlyList<RepositoryPath> paths, CancellationToken token)
-            { Staged = true; return Task.FromResult(Result.Success()); }
+            { StagedPaths = paths; Staged = true; return Task.FromResult(Result.Success()); }
             public Task<Result<RevisionSignature>> CreateAsync(RepositoryId id, string message, CancellationToken token)
             {
                 Commits++;
                 if (CommitCancelled) throw new OperationCanceledException();
                 if (CommitFailed) return Task.FromResult(Result<RevisionSignature>.Failure(
                     new LoreError(ErrorCode.Unknown, "CLI failure.")));
+                Staged = false;
                 return Task.FromResult(Result<RevisionSignature>.Success(new RevisionSignature("revision")));
             }
             public Task<Result> PushAsync(RepositoryId id, CancellationToken token) =>
@@ -83,7 +93,7 @@ namespace Lore.Unity.Tests.Application
             var outcome = Service(fake).ExecuteAsync(plan, CancellationToken.None).GetAwaiter().GetResult();
             Assert.That(outcome.IsCommitted, Is.True);
             Assert.That(outcome.Push.Value.Error.Code, Is.EqualTo(ErrorCode.NetworkUnavailable));
-            Assert.That(fake.Reads, Is.EqualTo(2));
+            Assert.That(fake.Reads, Is.EqualTo(3));
         }
 
         [Test]
@@ -132,6 +142,38 @@ namespace Lore.Unity.Tests.Application
                 .GetAwaiter().GetResult();
             Assert.That(outcome.CommitOutcomeUnknown, Is.True);
             Assert.That(outcome.IsCommitted, Is.False);
+        }
+
+        [Test]
+        public void AssetSelectionIncludesChangedMetaInStage()
+        {
+            var fake = new Fake { MetaChanged = true };
+            var plan = new CheckInPlan(new RepositoryId("repo"), new[] { new RepositoryPath("Assets/a.txt") }, "Message", false);
+            var outcome = Service(fake).ExecuteAsync(plan, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.That(outcome.IsCommitted, Is.True);
+            Assert.That(fake.StagedPaths.Count, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void MetaOnlyChangeCanBeCheckedInAsLogicalAsset()
+        {
+            var fake = new Fake { MetaOnly = true };
+            var plan = new CheckInPlan(new RepositoryId("repo"), new[] { new RepositoryPath("Assets/a.txt") }, "Message", false);
+            var outcome = Service(fake).ExecuteAsync(plan, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.That(outcome.IsCommitted, Is.True);
+            Assert.That(fake.StagedPaths.Count, Is.EqualTo(1));
+            Assert.That(fake.StagedPaths[0], Is.EqualTo(new RepositoryPath("Assets/a.txt.meta")));
+        }
+
+        [Test]
+        public void FailedPostCommitStatusKeepsCommitSuccessAndSkipsPush()
+        {
+            var fake = new Fake { PostCommitStatusFails = true };
+            var plan = new CheckInPlan(new RepositoryId("repo"), new[] { new RepositoryPath("Assets/a.txt") }, "Message", true);
+            var outcome = Service(fake).ExecuteAsync(plan, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.That(outcome.IsCommitted, Is.True);
+            Assert.That(outcome.PostCommitStatus.Value.IsFailure, Is.True);
+            Assert.That(outcome.Push.HasValue, Is.False);
         }
     }
 }

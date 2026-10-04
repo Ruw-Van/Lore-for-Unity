@@ -37,12 +37,25 @@ namespace Lore.Unity.Tests.Application
             { Boundaries++; return Task.FromResult(Result.Success()); }
         }
 
+        private sealed class Verifier : IWorkingCopyStatusVerifier
+        {
+            public bool Fail;
+            public int Calls;
+            public Task<Result> VerifyUnderLeaseAsync(RepositoryId id, CancellationToken token)
+            {
+                Calls++;
+                return Task.FromResult(Fail ? Result.Failure(new LoreError(ErrorCode.ValidationFailed,
+                    "Status unavailable.")) : Result.Success());
+            }
+        }
+
         [Test]
         public void PreflightStopsLoreWriteBeforeJournal()
         {
             var journal = new Journal();
             var writes = 0;
-            var operation = new WorkingCopyOperation(new RepositoryOperationGate(), new Guard { Unsafe = true }, journal);
+            var operation = new WorkingCopyOperation(new RepositoryOperationGate(), new Guard { Unsafe = true },
+                journal, new Verifier());
             var outcome = operation.ExecuteAsync(new RepositoryId("repo"), "Sync", token =>
             { writes++; return Task.FromResult(Result.Success()); }, CancellationToken.None).GetAwaiter().GetResult();
             Assert.That(outcome.Result.IsFailure, Is.True);
@@ -54,7 +67,8 @@ namespace Lore.Unity.Tests.Application
         public void LoreSuccessWithUnityFailureLeavesJournalIncomplete()
         {
             var journal = new Journal();
-            var operation = new WorkingCopyOperation(new RepositoryOperationGate(), new Guard { ImportFailed = true }, journal);
+            var operation = new WorkingCopyOperation(new RepositoryOperationGate(), new Guard { ImportFailed = true },
+                journal, new Verifier());
             var outcome = operation.ExecuteAsync(new RepositoryId("repo"), "BranchSwitch",
                 token => Task.FromResult(Result.Success()), CancellationToken.None).GetAwaiter().GetResult();
             Assert.That(outcome.LoreApplied, Is.True);
@@ -71,7 +85,8 @@ namespace Lore.Unity.Tests.Application
                 var root = new AbsolutePath(path);
                 var repository = new RepositoryId(new string('c', 32));
                 var journal = new FileRecoveryJournal(root);
-                var operation = new WorkingCopyOperation(new RepositoryOperationGate(), new Guard(), journal);
+                var operation = new WorkingCopyOperation(new RepositoryOperationGate(), new Guard(), journal,
+                    new Verifier());
                 var result = operation.ExecuteAsync(repository, "Sync", token =>
                     Task.FromResult(Result.Failure(new LoreError(ErrorCode.Unknown, "Unknown write outcome."))),
                     CancellationToken.None).GetAwaiter().GetResult();
@@ -82,6 +97,20 @@ namespace Lore.Unity.Tests.Application
                 Assert.That(pending[0].LoreApplied, Is.False);
             }
             finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
+        }
+
+        [Test]
+        public void LoreStatusFailureAfterUnityRefreshKeepsRecoveryPending()
+        {
+            var journal = new Journal();
+            var verifier = new Verifier { Fail = true };
+            var operation = new WorkingCopyOperation(new RepositoryOperationGate(), new Guard(), journal, verifier);
+            var outcome = operation.ExecuteAsync(new RepositoryId("repo"), "Sync",
+                token => Task.FromResult(Result.Success()), CancellationToken.None).GetAwaiter().GetResult();
+            Assert.That(verifier.Calls, Is.EqualTo(1));
+            Assert.That(outcome.Result.IsFailure, Is.True);
+            Assert.That(outcome.LoreApplied, Is.True);
+            Assert.That(journal.Boundaries, Is.EqualTo(2));
         }
     }
 }

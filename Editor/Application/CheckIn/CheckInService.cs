@@ -46,19 +46,42 @@ namespace Lore.Unity.Application.CheckIn
                 var before = await ReadUnderLease(status.Value, plan.Repository,
                     Array.Empty<RepositoryPath>(), token);
                 if (before.IsFailure) return Failed(id, before.Error);
-                var selected = new HashSet<RepositoryPath>(plan.Paths);
+                var selected = new HashSet<RepositoryPath>();
+                var logical = new HashSet<RepositoryPath>();
+                foreach (var path in plan.Paths)
+                {
+                    if (!path.Value.StartsWith("Assets/", StringComparison.Ordinal))
+                    {
+                        selected.Add(path);
+                        logical.Add(path);
+                        continue;
+                    }
+                    var asset = path.Value.EndsWith(".meta", StringComparison.Ordinal)
+                        ? new RepositoryPath(path.Value.Substring(0, path.Value.Length - ".meta".Length)) : path;
+                    logical.Add(asset);
+                    selected.Add(asset);
+                    selected.Add(new RepositoryPath(asset.Value + ".meta"));
+                }
                 var changes = new List<RepositoryPath>();
+                var found = new HashSet<RepositoryPath>();
                 foreach (var entry in before.Value)
                 {
                     if (entry.Status.Stage != StageState.Unstaged)
                         return Failed(id, new LoreError(ErrorCode.ValidationFailed,
                             "Existing staged changes must be resolved before Check In."));
                     if (selected.Contains(entry.Path) && entry.Status.Working != WorkingState.Unchanged)
+                    {
                         changes.Add(entry.Path);
+                        var asset = entry.Path.Value.StartsWith("Assets/", StringComparison.Ordinal) &&
+                            entry.Path.Value.EndsWith(".meta", StringComparison.Ordinal)
+                            ? new RepositoryPath(entry.Path.Value.Substring(0, entry.Path.Value.Length - ".meta".Length))
+                            : entry.Path;
+                        found.Add(asset);
+                    }
                 }
-                if (changes.Count != selected.Count)
+                if (!found.SetEquals(logical))
                     return Failed(id, new LoreError(ErrorCode.ValidationFailed,
-                        "Every selected path must have a detected change."));
+                        "Every selected logical asset or repository file must have a detected change."));
                 if (changes.Count == 0)
                     return Failed(id, new LoreError(ErrorCode.ValidationFailed, "No changes selected for Check In."));
 
@@ -103,18 +126,44 @@ namespace Lore.Unity.Application.CheckIn
                 // not commit locally. Never offer an automatic retry as a new commit.
                 if (committed.IsFailure) return new CheckInOutcome(id, committed, null,
                     OperationState.Failed, true);
+                Result postCommit;
+                try
+                {
+                    var refresh = await ReadUnderLease(status.Value, plan.Repository,
+                        Array.Empty<RepositoryPath>(), CancellationToken.None);
+                    postCommit = refresh.IsFailure ? Result.Failure(refresh.Error) : Result.Success();
+                    if (refresh.IsSuccess)
+                        foreach (var entry in refresh.Value)
+                            if (selected.Contains(entry.Path) && entry.Status.Stage != StageState.Unstaged)
+                            {
+                                postCommit = WriteErrors.Failure(ErrorCode.ValidationFailed,
+                                    "Commit succeeded, but selected files remain staged.");
+                                break;
+                            }
+                }
+                catch (OperationCanceledException)
+                {
+                    postCommit = WriteErrors.Failure(ErrorCode.Unknown,
+                        "Commit succeeded, but status refresh was interrupted.");
+                }
+                if (postCommit.IsFailure)
+                    return new CheckInOutcome(id, committed, null, OperationState.Failed,
+                        postCommitStatus: postCommit);
                 if (!plan.PushAfterCommit)
-                    return new CheckInOutcome(id, committed, null, OperationState.Completed);
+                    return new CheckInOutcome(id, committed, null, OperationState.Completed,
+                        postCommitStatus: postCommit);
                 try
                 {
                     var pushed = await push.Value.PushAsync(plan.Repository, token);
                     return new CheckInOutcome(id, committed, pushed,
-                        pushed.IsSuccess ? OperationState.Completed : OperationState.Failed);
+                        pushed.IsSuccess ? OperationState.Completed : OperationState.Failed,
+                        postCommitStatus: postCommit);
                 }
                 catch (OperationCanceledException)
                 {
                     return new CheckInOutcome(id, committed,
-                        WriteErrors.Failure(ErrorCode.Cancelled, "Push cancelled after commit."), OperationState.Cancelled);
+                        WriteErrors.Failure(ErrorCode.Cancelled, "Push cancelled after commit."), OperationState.Cancelled,
+                        postCommitStatus: postCommit);
                 }
             }
         }

@@ -49,13 +49,18 @@ namespace Lore.Unity.Infrastructure.LoreCli
         public async Task<Result> PushAsync(RepositoryId repository, CancellationToken token) =>
             await ExecuteAsync(repository, new[] { "--json", "push" }, token);
 
-        public async Task<Result> SyncAsync(RepositoryId repository, CancellationToken token) =>
-            await ExecuteAsync(repository, new[] { "--json", "sync" }, token);
+        public async Task<Result> SyncAsync(RepositoryId repository, CancellationToken token)
+        {
+            var output = await RunAsync(repository, new[] { "--json", "sync" }, token);
+            return output.IsFailure ? Result.Failure(output.Error) : _parser.Sync(repository, output.Value.StandardOutput);
+        }
 
         public async Task<Result> SwitchAsync(RepositoryId repository, BranchName branch, CancellationToken token)
         {
             if (branch == null) throw new ArgumentNullException(nameof(branch));
-            return await ExecuteAsync(repository, new[] { "--json", "branch", "switch", "--", branch.Value }, token);
+            var output = await RunAsync(repository,
+                new[] { "--json", "branch", "switch", "--", branch.Value }, token);
+            return output.IsFailure ? Result.Failure(output.Error) : _parser.BranchSwitch(branch, output.Value.StandardOutput);
         }
 
         public async Task<Result<IReadOnlyList<BranchName>>> ListAsync(RepositoryId repository, CancellationToken token)
