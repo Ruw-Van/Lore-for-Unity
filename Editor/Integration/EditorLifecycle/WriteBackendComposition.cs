@@ -25,7 +25,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
             CheckIn = new CheckInService(session, gate, guard);
             Push = new PushService(session, gate);
             Sync = new SyncService(session, workingCopy);
-            Branch = new BranchService(session, workingCopy);
+            Branch = new BranchService(session, workingCopy, gate);
             Lock = new LockService(session, gate);
             Status = new StatusReader(session, store);
         }

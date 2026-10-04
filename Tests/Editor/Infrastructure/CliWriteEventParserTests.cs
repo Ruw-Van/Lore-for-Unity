@@ -70,5 +70,17 @@ namespace Lore.Unity.Tests.Infrastructure
             Assert.That(new CliWriteEventParser().BranchSwitch(new BranchName("other"), begin + end + done).IsFailure, Is.True);
             Assert.That(new CliWriteEventParser().BranchSwitch(new BranchName("main"), begin + done).IsFailure, Is.True);
         }
+
+        [Test]
+        public void BranchListRequiresBeginEntriesAndMatchingEndCount()
+        {
+            var begin = "{\"tagName\":\"branchListBegin\",\"data\":{\"location\":\"local\"}}\n";
+            var entry = "{\"tagName\":\"branchListEntry\",\"data\":{\"name\":\"main\"}}\n";
+            var end = "{\"tagName\":\"branchListEnd\",\"data\":{\"count\":1}}\n";
+            var done = "{\"tagName\":\"complete\",\"data\":{\"status\":0}}\n";
+            Assert.That(new CliWriteEventParser().Branches(begin + entry + end + done).Value[0].Value, Is.EqualTo("main"));
+            Assert.That(new CliWriteEventParser().Branches(done).IsFailure, Is.True);
+            Assert.That(new CliWriteEventParser().Branches(begin + end + done).IsFailure, Is.True);
+        }
     }
 }

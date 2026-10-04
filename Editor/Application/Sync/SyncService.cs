@@ -21,6 +21,7 @@ namespace Lore.Unity.Application.Sync
 
         public Task<WriteOutcome> ExecuteAsync(RepositoryId repository, CancellationToken token)
         {
+            if (repository == null) throw new ArgumentNullException(nameof(repository));
             var selected = _backends.ResolveSync();
             if (selected.IsFailure) return Task.FromResult(new WriteOutcome(WriteErrors.NewId(),
                 Result.Failure(selected.Error), OperationState.Failed));

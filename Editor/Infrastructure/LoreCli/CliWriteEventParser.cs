@@ -42,6 +42,16 @@ namespace Lore.Unity.Infrastructure.LoreCli
         {
             [DataMember(Name = "name")] public string Name { get; set; }
         }
+        [DataContract]
+        private sealed class BranchListEndEvent
+        {
+            [DataMember(Name = "data")] public BranchListEndData Data { get; set; }
+        }
+        [DataContract]
+        private sealed class BranchListEndData
+        {
+            [DataMember(Name = "count")] public int? Count { get; set; }
+        }
 
         public Result Verify(string text)
         {
@@ -158,13 +168,45 @@ namespace Lore.Unity.Infrastructure.LoreCli
             var complete = Complete(events.Value);
             if (complete.IsFailure) return Result<IReadOnlyList<BranchName>>.Failure(complete.Error);
             var branches = new List<BranchName>();
+            var began = false;
+            var ended = false;
             try
             {
                 foreach (var item in events.Value)
-                    if (item.Tag == "branchListEntry") branches.Add(new BranchName(item.Data?.Name));
+                {
+                    if (item.Tag == "branchListBegin")
+                    {
+                        if (began || ended) return Invalid<IReadOnlyList<BranchName>>();
+                        began = true;
+                    }
+                    else if (item.Tag == "branchListEntry")
+                    {
+                        if (!began || ended) return Invalid<IReadOnlyList<BranchName>>();
+                        branches.Add(new BranchName(item.Data?.Name));
+                    }
+                    else if (item.Tag == "branchListEnd")
+                    {
+                        if (!began || ended)
+                            return Invalid<IReadOnlyList<BranchName>>();
+                        ended = true;
+                    }
+                }
+                if (began && ended)
+                    foreach (var line in text.TrimEnd('\r', '\n').Split('\n'))
+                        if (line.Contains("\"tagName\":\"branchListEnd\""))
+                        {
+                            using (var stream = new MemoryStream(Encoding.UTF8.GetBytes(line)))
+                            {
+                                var serializer = new DataContractJsonSerializer(typeof(BranchListEndEvent));
+                                var item = (BranchListEndEvent)serializer.ReadObject(stream);
+                                if (item?.Data?.Count != branches.Count) return Invalid<IReadOnlyList<BranchName>>();
+                            }
+                        }
             }
-            catch (ArgumentException) { return Invalid<IReadOnlyList<BranchName>>(); }
-            return Result<IReadOnlyList<BranchName>>.Success(branches.AsReadOnly());
+            catch (Exception e) when (e is ArgumentException || e is SerializationException)
+            { return Invalid<IReadOnlyList<BranchName>>(); }
+            return began && ended ? Result<IReadOnlyList<BranchName>>.Success(branches.AsReadOnly()) :
+                Invalid<IReadOnlyList<BranchName>>();
         }
 
         private static Result Complete(IReadOnlyList<Event> events)
