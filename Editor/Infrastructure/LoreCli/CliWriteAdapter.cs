@@ -13,13 +13,14 @@ namespace Lore.Unity.Infrastructure.LoreCli
     // These methods are invoked under the repository gate by Application services.
     // Only known CLI v0.10.0 commands are used; no --reset or implicit PATH lookup.
     public sealed class CliWriteAdapter : IRevisionBackend, IPushBackend, ISyncBackend, IBranchBackend,
-        ILockBackend, IMergeBackend
+        ILockBackend, IMergeBackend, IConflictBackend
     {
         private readonly LoreCliRunner _runner;
         private readonly RepositoryLocations _roots;
         private readonly CliWriteEventParser _parser;
         private readonly CliStatusParser _status = new CliStatusParser();
         private readonly CliMergeParser _merge = new CliMergeParser();
+        private readonly CliResolveParser _resolve = new CliResolveParser();
 
         public CliWriteAdapter(LoreCliRunner runner, RepositoryLocations roots, CliWriteEventParser parser)
         {
@@ -94,6 +95,20 @@ namespace Lore.Unity.Infrastructure.LoreCli
             var output = await RunAsync(repository,
                 new[] { "--json", "--offline", "branch", "merge", "--", source.Value }, token);
             return output.IsFailure ? Result.Failure(output.Error) : _merge.Parse(output.Value.StandardOutput);
+        }
+
+        public async Task<Result> ChooseVersionAsync(RepositoryId repository,
+            IReadOnlyList<RepositoryPath> paths, ConflictChoice choice, CancellationToken token)
+        {
+            if (paths == null || paths.Count == 0) throw new ArgumentException("Paths required.", nameof(paths));
+            if (choice != ConflictChoice.Mine && choice != ConflictChoice.Theirs)
+                throw new ArgumentOutOfRangeException(nameof(choice));
+            var args = new List<string> { "--json", "--offline", "branch", "merge", "resolve",
+                choice == ConflictChoice.Mine ? "mine" : "theirs", "--" };
+            foreach (var path in paths) args.Add(path.Value);
+            var output = await RunAsync(repository, args, token);
+            return output.IsFailure ? Result.Failure(output.Error) :
+                _resolve.Parse(repository, paths, output.Value.StandardOutput);
         }
 
         public async Task<Result<IReadOnlyList<BranchName>>> ListAsync(RepositoryId repository, CancellationToken token)

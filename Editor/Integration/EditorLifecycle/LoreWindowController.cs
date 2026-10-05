@@ -6,11 +6,14 @@ using Lore.Unity.Application.Operations;
 using Lore.Unity.Application.CheckIn;
 using Lore.Unity.Application.Diff;
 using Lore.Unity.Application.Diagnostics;
+using Lore.Unity.Application.Conflicts;
 using Lore.Unity.Application.Queries;
 using Lore.Unity.Application.Runtime;
 using Lore.Unity.Application.Status;
 using Lore.Unity.Core.Status;
 using Lore.Unity.Core.Repository;
+using Lore.Unity.Core.Operations;
+using Lore.Unity.Application.Backend;
 using Lore.Unity.Infrastructure.Recovery;
 using Lore.Unity.Core.Errors;
 using Lore.Unity.Core.Identifiers;
@@ -29,6 +32,20 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public string RequiredVersion => LoreBootstrap.RequiredVersion;
         public bool ReadAvailable => LoreBootstrap.Queries != null;
         public bool WriteEnabled => LoreBootstrap.Writes != null;
+        public IReadOnlyList<ResolverKind> ResolverCandidates(RepositoryPath path) =>
+            new ConflictResolverChain().Candidates(path);
+
+        public async Task<Result<WriteOutcome>> ChooseVersionAsync(OperationId recoveryId,
+            RepositoryPath path, ConflictChoice choice, CancellationToken token)
+        {
+            var service = LoreBootstrap.CreateConflictRecovery();
+            if (service.IsFailure || Repository == null)
+                return Result<WriteOutcome>.Failure(service.IsFailure ? service.Error : Unavailable());
+            var outcome = await service.Value.ChooseAsync(recoveryId, Repository, path, choice, token);
+            if (outcome.LoreApplied && !token.IsCancellationRequested)
+                await RefreshAfterWriteAsync(token);
+            return Result<WriteOutcome>.Success(outcome);
+        }
         public StatusSnapshot Status => LoreBootstrap.Status;
         public UnityLogicalAssetIndex Assets => LoreBootstrap.Assets;
         public LoreError StatusError => LoreBootstrap.StatusError;
@@ -39,7 +56,8 @@ namespace Lore.Unity.Integration.EditorLifecycle
         {
             var pending = PendingRecovery();
             var status = Status;
-            return new DiagnosticsSummary("0.1.0", UnityEngine.Application.unityVersion,
+            var package = UnityEditor.PackageManager.PackageInfo.FindForAssembly(typeof(LoreWindowController).Assembly);
+            return new DiagnosticsSummary(package?.version, UnityEngine.Application.unityVersion,
                 LoreBootstrap.RequiredVersion, Availability.ToString(), Repository != null,
                 status == null || Assets == null || StatusError != null,
                 status?.Generation, status?.RefreshedUtc,

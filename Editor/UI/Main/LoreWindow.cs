@@ -8,6 +8,8 @@ using Lore.Unity.Application.Queries;
 using Lore.Unity.Core.Identifiers;
 using Lore.Unity.Core.Paths;
 using Lore.Unity.Core.Status;
+using Lore.Unity.Core.Results;
+using Lore.Unity.Infrastructure.Recovery;
 using Lore.Unity.Integration.Assets;
 using Lore.Unity.Integration.EditorLifecycle;
 using UnityEditor;
@@ -36,6 +38,8 @@ namespace Lore.Unity.UI.Main
         private long _generation = -1;
         private Lore.Unity.Application.Status.StatusSnapshot _observedStatus;
         private UnityLogicalAssetIndex _observedAssets;
+        private Result<IReadOnlyList<PendingRecovery>> _pending;
+        private double _nextRecoveryScan;
 
         [MenuItem("Window/Lore/Lore")]
         public static void Open() => GetWindow<LoreWindow>("Lore");
@@ -58,6 +62,12 @@ namespace Lore.Unity.UI.Main
 
         private void OnEditorUpdate()
         {
+            if (EditorApplication.timeSinceStartup >= _nextRecoveryScan)
+            {
+                _nextRecoveryScan = EditorApplication.timeSinceStartup + 2;
+                _pending = _controller.PendingRecovery();
+                Repaint();
+            }
             var status = _controller?.Status;
             var assets = _controller?.Assets;
             if (ReferenceEquals(status, _observedStatus) && ReferenceEquals(assets, _observedAssets)) return;
@@ -75,9 +85,8 @@ namespace Lore.Unity.UI.Main
             if (_controller.LockError != null) EditorGUILayout.HelpBox(_controller.LockError.Message, MessageType.Warning);
             if (_controller.LastRefreshError != null)
                 EditorGUILayout.HelpBox(_controller.LastRefreshError.Message, MessageType.Warning);
-            var pending = _controller.PendingRecovery();
-            if (pending.IsSuccess)
-                foreach (var item in pending.Value)
+            if (_pending.IsSuccess)
+                foreach (var item in _pending.Value)
                 {
                     EditorGUILayout.HelpBox("Recovery pending: " + item.Operation + " (" + item.Id.Value +
                         "). Inspect the working copy and Lore native state before acknowledging.", MessageType.Warning);
@@ -148,6 +157,29 @@ namespace Lore.Unity.UI.Main
                 DrawSelection(file.Path, file.Path.Value + "  " + Describe(file, null));
             }
             EditorGUILayout.EndScrollView();
+            if (_selected.Count == 1)
+                foreach (var path in _selected)
+                {
+                    var conflicted = index.TryGet(path, out var selectedAsset) &&
+                        (selectedAsset.Asset?.Status.Conflict == ConflictState.Conflicted ||
+                         selectedAsset.Meta?.Status.Conflict == ConflictState.Conflicted);
+                    if (conflicted)
+                    {
+                        var options = _controller.ResolverCandidates(path);
+                        EditorGUILayout.HelpBox("Lore native conflict. Resolver priority: " +
+                            string.Join(" → ", options) +
+                            ". Binary choice discards one version; review Diff before proceeding.",
+                            MessageType.Warning);
+                        if (_pending.IsSuccess)
+                            foreach (var recovery in _pending.Value)
+                                if (recovery.Operation == "BranchMerge" && recovery.LoreApplied &&
+                                    recovery.Repository.Equals(_controller.Repository))
+                                {
+                                    DrawChoice(recovery, path, ConflictChoice.Mine, "Keep mine");
+                                    DrawChoice(recovery, path, ConflictChoice.Theirs, "Keep theirs");
+                                }
+                    }
+                }
             EditorGUILayout.LabelField("Diff mode", _diffMode.ToString());
             if (GUILayout.Button("Toggle Simple / Structured"))
                 _diffMode = _diffMode == DiffMode.Simple ? DiffMode.Structured : DiffMode.Simple;
@@ -225,6 +257,18 @@ namespace Lore.Unity.UI.Main
         }
 
         private static RepositoryPath Key(UnityLogicalAsset asset) => asset.Asset?.Path ?? asset.Meta.Path;
+
+        private void DrawChoice(PendingRecovery pending, RepositoryPath path,
+            ConflictChoice choice, string label)
+        {
+            EditorGUI.BeginDisabledGroup(_busy);
+            if (GUILayout.Button(label) && EditorUtility.DisplayDialog("Discard one conflict version?",
+                "Lore will choose " + label + " for " + path.Value +
+                " and its conflicted .meta. The other version is discarded. Recovery stays pending " +
+                "until you inspect and acknowledge it.", "Choose version", "Cancel"))
+                Schedule(() => RunChoiceAsync(pending.Id, path, choice));
+            EditorGUI.EndDisabledGroup();
+        }
         private static string Describe(FileStatusEntry asset, FileStatusEntry meta) =>
             (asset == null ? string.Empty : asset.Status.Working + "/" + asset.Status.Stage) +
             (meta == null ? string.Empty : "  meta:" + meta.Status.Working + "/" + meta.Status.Stage) +
@@ -306,6 +350,15 @@ namespace Lore.Unity.UI.Main
                     result.Error.Message;
             });
 
+        private async Task RunChoiceAsync(OperationId id, RepositoryPath path,
+            ConflictChoice choice) => await RunAsync(async token =>
+        {
+            var result = await _controller.ChooseVersionAsync(id, path, choice, token);
+            _notice = result.IsFailure ? result.Error.Message : result.Value.Result.IsFailure
+                ? "Lore resolution requires inspection: " + result.Value.Result.Error.Message
+                : "Lore resolved the selected file. Inspect remaining conflicts before acknowledging recovery.";
+        });
+
         private async Task RunAsync(Func<CancellationToken, Task> operation)
         {
             if (_busy || _lifetime == null) return;
@@ -313,7 +366,12 @@ namespace Lore.Unity.UI.Main
             try { await operation(_lifetime.Token); }
             catch (OperationCanceledException) { _notice = "Operation cancelled; re-query Lore before retry."; }
             catch (Exception error) { _notice = "Operation failed: " + error.GetType().Name; }
-            finally { _busy = false; if (this != null) Repaint(); }
+            finally
+            {
+                _busy = false;
+                _nextRecoveryScan = 0;
+                if (this != null) Repaint();
+            }
         }
     }
 }

@@ -6,6 +6,7 @@ using Lore.Unity.Core.Paths;
 using Lore.Unity.Core.Errors;
 using Lore.Unity.Application.Queries;
 using Lore.Unity.Application.Diff;
+using Lore.Unity.Application.Conflicts;
 using Lore.Unity.Application.Status;
 using Lore.Unity.Core.Results;
 using Lore.Unity.Core.Repository;
@@ -61,6 +62,13 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public static FileRecoveryJournal Recovery => _repository == null ? null : new FileRecoveryJournal(
             new AbsolutePath(Path.Combine(Path.GetDirectoryName(UnityEngine.Application.dataPath),
                 "Library", "LoreForUnity", "Recovery")));
+        public static Result<ConflictService> CreateConflictRecovery()
+        {
+            if (_repository == null || _composition?.Reads == null)
+                return Result<ConflictService>.Failure(new LoreError(ErrorCode.InvalidRepository,
+                    "No verified Lore repository is available."));
+            return _composition.Reads.CreateConflictRecovery(new UnityWorkingCopyGuard(), Recovery);
+        }
         public static LoreError StatusError => _projection?.Current != null ? _changes?.LastError :
             _changes?.LastError ?? _initialStatusError;
 

@@ -2,6 +2,7 @@ using Lore.Unity.Application.Backend;
 using Lore.Unity.Application.Status;
 using Lore.Unity.Application.Queries;
 using Lore.Unity.Application.Diff;
+using Lore.Unity.Application.Conflicts;
 using Lore.Unity.Application.Operations;
 using Lore.Unity.Core.Paths;
 using Lore.Unity.Core.Results;
@@ -46,6 +47,17 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public StatusStore Store { get; }
         public RepositoryQueries Queries { get; }
         public DiffService Diff { get; }
+
+        public Result<ConflictService> CreateConflictRecovery(IWorkingCopyGuard guard, FileRecoveryJournal journal)
+        {
+            if (guard == null || journal == null) throw new System.ArgumentNullException(
+                guard == null ? nameof(guard) : nameof(journal));
+            if (_cliRead == null || _runner == null || _roots == null || _gate == null)
+                return Result<ConflictService>.Failure(new Lore.Unity.Core.Errors.LoreError(
+                    Lore.Unity.Core.Errors.ErrorCode.UnsupportedOperation, "Verified CLI is required for conflict recovery."));
+            var backend = new CliWriteAdapter(_runner, _roots, new CliWriteEventParser());
+            return Result<ConflictService>.Success(new ConflictService(backend, _cliRead, _gate, guard, journal));
+        }
 
         // Not invoked at Editor startup. A caller must provide safety/recovery
         // dependencies explicitly; an incomplete journal prevents activation.

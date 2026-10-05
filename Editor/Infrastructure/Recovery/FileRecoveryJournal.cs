@@ -31,7 +31,7 @@ namespace Lore.Unity.Infrastructure.Recovery
     // Append-only boundary markers. A completed operation remains on disk so a
     // partial cleanup can never make it look pending again. Files belong under
     // the host project's Library (not the package or Lore repository).
-    public sealed class FileRecoveryJournal : IRecoveryJournal
+    public sealed class FileRecoveryJournal : IConflictRecoveryJournal
     {
         private readonly string _directory;
         private readonly object _mutex = new object();
@@ -82,6 +82,17 @@ namespace Lore.Unity.Infrastructure.Recovery
                 catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
                 { return Invalid<IReadOnlyList<PendingRecovery>>(); }
             }
+        }
+
+        public Result VerifyAppliedMerge(OperationId id, RepositoryId repository)
+        {
+            if (id == null || repository == null) throw new ArgumentNullException(id == null ? nameof(id) : nameof(repository));
+            var current = Pending();
+            if (current.IsFailure) return Result.Failure(current.Error);
+            foreach (var item in current.Value)
+                if (item.Id.Equals(id) && item.Repository.Equals(repository) &&
+                    item.Operation == "BranchMerge" && item.LoreApplied) return Result.Success();
+            return Failure("An applied merge recovery record is required before resolving conflicts.");
         }
 
         private Task<Result> Mark(OperationId id, string suffix, string prerequisite, CancellationToken token)

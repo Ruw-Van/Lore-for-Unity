@@ -27,6 +27,11 @@ namespace Lore.Unity.Application.Operations
         Task<Result> CompleteAsync(OperationId id, CancellationToken token);
     }
 
+    public interface IConflictRecoveryJournal : IRecoveryJournal
+    {
+        Result VerifyAppliedMerge(OperationId id, RepositoryId repository);
+    }
+
     public interface IWorkingCopyStatusVerifier
     {
         // Invoked while the repository lease is held, after Unity import.

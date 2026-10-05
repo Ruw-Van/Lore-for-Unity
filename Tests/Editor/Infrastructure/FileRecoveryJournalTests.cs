@@ -80,6 +80,9 @@ namespace Lore.Unity.Tests.Infrastructure
                 Assert.That(journal.LoreAppliedAsync(id, CancellationToken.None).Result.IsSuccess, Is.True);
                 var reopened = new FileRecoveryJournal(new AbsolutePath(path));
                 Assert.That(reopened.Pending().Value[0].Operation, Is.EqualTo("BranchMerge"));
+                Assert.That(reopened.VerifyAppliedMerge(id, repo).IsSuccess, Is.True);
+                Assert.That(reopened.VerifyAppliedMerge(new OperationId(Guid.NewGuid().ToString("N")), repo).IsFailure,
+                    Is.True);
                 Assert.That(reopened.CompleteAsync(id, CancellationToken.None).Result.IsSuccess, Is.True);
                 Assert.That(reopened.Pending().Value.Count, Is.EqualTo(0));
             }

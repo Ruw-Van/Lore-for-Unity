@@ -34,3 +34,7 @@ sysinfo.txt
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Offline package validation
+__pycache__/
+*.pyc

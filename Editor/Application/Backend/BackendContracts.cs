@@ -99,4 +99,12 @@ namespace Lore.Unity.Application.Backend
     {
         Task<Result> MergeAsync(RepositoryId repository, BranchName branch, CancellationToken cancellationToken);
     }
+
+    public enum ConflictChoice { Mine, Theirs }
+
+    public interface IConflictBackend
+    {
+        Task<Result> ChooseVersionAsync(RepositoryId repository, IReadOnlyList<RepositoryPath> paths,
+            ConflictChoice choice, CancellationToken cancellationToken);
+    }
 }
