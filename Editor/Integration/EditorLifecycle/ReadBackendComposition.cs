@@ -1,6 +1,7 @@
 using Lore.Unity.Application.Backend;
 using Lore.Unity.Application.Status;
 using Lore.Unity.Application.Queries;
+using Lore.Unity.Application.Diff;
 using Lore.Unity.Application.Operations;
 using Lore.Unity.Core.Paths;
 using Lore.Unity.Core.Results;
@@ -33,12 +34,18 @@ namespace Lore.Unity.Integration.EditorLifecycle
             _gate = gate;
             Queries = runner != null && roots != null
                 ? new RepositoryQueries(new CliRepositoryQueries(runner, roots)) : null;
+            if (runner != null && roots != null && gate != null)
+            {
+                var source = new CliDiffAdapter(runner, roots, gate);
+                Diff = new DiffService(source, new UnityYamlStructuredDiff(source));
+            }
         }
 
         public BackendSession Session { get; }
         public StatusReader Status { get; }
         public StatusStore Store { get; }
         public RepositoryQueries Queries { get; }
+        public DiffService Diff { get; }
 
         // Not invoked at Editor startup. A caller must provide safety/recovery
         // dependencies explicitly; an incomplete journal prevents activation.

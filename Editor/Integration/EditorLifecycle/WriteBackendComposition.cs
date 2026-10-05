@@ -2,6 +2,7 @@ using Lore.Unity.Application.Backend;
 using Lore.Unity.Application.Branches;
 using Lore.Unity.Application.CheckIn;
 using Lore.Unity.Application.Locks;
+using Lore.Unity.Application.Merge;
 using Lore.Unity.Application.Operations;
 using Lore.Unity.Application.Push;
 using Lore.Unity.Application.Status;
@@ -27,6 +28,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
             Sync = new SyncService(session, workingCopy);
             Branch = new BranchService(session, workingCopy, gate);
             Lock = new LockService(session, gate);
+            Merge = new MergeService(session, workingCopy);
             Status = new StatusReader(session, store);
         }
 
@@ -35,6 +37,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public SyncService Sync { get; }
         public BranchService Branch { get; }
         public LockService Lock { get; }
+        public MergeService Merge { get; }
         public StatusReader Status { get; }
 
         private sealed class CliSet : IWriteBackendSet
@@ -48,6 +51,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
                 Sync = write;
                 Branch = write;
                 Lock = write;
+                Merge = write;
             }
             public IRepositoryBackend Repository { get; }
             public IStatusBackend Status { get; }
@@ -56,6 +60,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
             public ISyncBackend Sync { get; }
             public IBranchBackend Branch { get; }
             public ILockBackend Lock { get; }
+            public IMergeBackend Merge { get; }
         }
     }
 }

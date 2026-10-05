@@ -17,6 +17,7 @@ namespace Lore.Unity.Application.Backend
         ISyncBackend Sync { get; }
         IBranchBackend Branch { get; }
         ILockBackend Lock { get; }
+        IMergeBackend Merge { get; }
     }
 
     // Binding is selected once; a failed call never triggers another backend.
@@ -56,6 +57,7 @@ namespace Lore.Unity.Application.Backend
         public Result<ISyncBackend> ResolveSync() => ResolveWrite(BackendCapability.Sync, set => set.Sync);
         public Result<IBranchBackend> ResolveBranch() => ResolveWrite(BackendCapability.Branch, set => set.Branch);
         public Result<ILockBackend> ResolveLock() => ResolveWrite(BackendCapability.Lock, set => set.Lock);
+        public Result<IMergeBackend> ResolveMerge() => ResolveWrite(BackendCapability.Merge, set => set.Merge);
 
         private Result<T> ResolveWrite<T>(BackendCapability capability, Func<IWriteBackendSet, T> pick) where T : class
         {

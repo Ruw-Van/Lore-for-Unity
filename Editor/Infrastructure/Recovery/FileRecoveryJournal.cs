@@ -45,7 +45,8 @@ namespace Lore.Unity.Infrastructure.Recovery
         public Task<Result> BeginAsync(OperationId id, RepositoryId repository, string operation, CancellationToken token)
         {
             if (repository == null) throw new ArgumentNullException(nameof(repository));
-            if (operation != "Sync" && operation != "BranchSwitch") throw new ArgumentException("Unknown operation.", nameof(operation));
+            if (operation != "Sync" && operation != "BranchSwitch" && operation != "BranchMerge")
+                throw new ArgumentException("Unknown operation.", nameof(operation));
             var name = Name(id);
             lock (_mutex)
             {
@@ -136,7 +137,7 @@ namespace Lore.Unity.Infrastructure.Recovery
                     if (!ValidName(name)) return Invalid<IReadOnlyList<PendingRecovery>>();
                     var lines = File.ReadAllLines(file, Encoding.UTF8);
                     if (lines.Length != 2 || lines[0].Length != 32 || !Hex(lines[0]) ||
-                        (lines[1] != "Sync" && lines[1] != "BranchSwitch"))
+                        (lines[1] != "Sync" && lines[1] != "BranchSwitch" && lines[1] != "BranchMerge"))
                         return Invalid<IReadOnlyList<PendingRecovery>>();
                     var applied = File.Exists(Path.Combine(_directory, name + ".applied"));
                     if (File.Exists(Path.Combine(_directory, name + ".complete")))

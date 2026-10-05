@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Lore.Unity.Application.Backend;
+using Lore.Unity.Application.Diff;
 using Lore.Unity.Application.Queries;
 using Lore.Unity.Core.Identifiers;
 using Lore.Unity.Core.Paths;
+using Lore.Unity.Core.Status;
 using Lore.Unity.Integration.Assets;
 using Lore.Unity.Integration.EditorLifecycle;
 using UnityEditor;
@@ -24,6 +26,9 @@ namespace Lore.Unity.UI.Main
         private Vector2 _scroll;
         private string _message = string.Empty;
         private string _notice;
+        private string _diff;
+        private RepositoryPath _diffPath;
+        private DiffMode _diffMode = DiffMode.Simple;
         private bool _pushAfterCommit = true;
         private bool _busy;
         private int _tab;
@@ -60,6 +65,18 @@ namespace Lore.Unity.UI.Main
             if (_controller.LockError != null) EditorGUILayout.HelpBox(_controller.LockError.Message, MessageType.Warning);
             if (_controller.LastRefreshError != null)
                 EditorGUILayout.HelpBox(_controller.LastRefreshError.Message, MessageType.Warning);
+            var pending = _controller.PendingRecovery();
+            if (pending.IsSuccess)
+                foreach (var item in pending.Value)
+                {
+                    EditorGUILayout.HelpBox("Recovery pending: " + item.Operation + " (" + item.Id.Value +
+                        "). Inspect the working copy and Lore native state before acknowledging.", MessageType.Warning);
+                    if (!_busy && GUILayout.Button("Acknowledge inspected recovery") &&
+                        EditorUtility.DisplayDialog("Acknowledge recovery?",
+                            "Only continue if you inspected the working copy and resolved or aborted the Lore merge. " +
+                            "This does not perform resolution or undo any changes.", "Acknowledge", "Cancel"))
+                        Schedule(() => RunAcknowledgeAsync(item));
+                }
             if (!string.IsNullOrEmpty(_notice)) EditorGUILayout.HelpBox(_notice, MessageType.Info);
             _tab = GUILayout.Toolbar(_tab, Tabs);
             switch (_tab)
@@ -121,6 +138,18 @@ namespace Lore.Unity.UI.Main
                 DrawSelection(file.Path, file.Path.Value + "  " + Describe(file, null));
             }
             EditorGUILayout.EndScrollView();
+            EditorGUILayout.LabelField("Diff mode", _diffMode.ToString());
+            if (GUILayout.Button("Toggle Simple / Structured"))
+                _diffMode = _diffMode == DiffMode.Simple ? DiffMode.Structured : DiffMode.Simple;
+            if (_selected.Count == 1 && !_busy && GUILayout.Button("Show Diff"))
+            {
+                foreach (var path in _selected) Schedule(() => RunDiffAsync(path, _diffMode));
+            }
+            if (_diff != null)
+            {
+                EditorGUILayout.LabelField("Diff", _diffPath.Value);
+                EditorGUILayout.TextArea(_diff);
+            }
             _message = EditorGUILayout.TextField("Message", _message);
             _pushAfterCommit = EditorGUILayout.Toggle("Push after Check In", _pushAfterCommit);
             EditorGUI.BeginDisabledGroup(_busy || _selected.Count == 0 || string.IsNullOrWhiteSpace(_message));
@@ -166,6 +195,13 @@ namespace Lore.Unity.UI.Main
                         "Switch", "Cancel"))
                     Schedule(() => RunSwitchAsync(branch));
                 EditorGUI.EndDisabledGroup();
+                EditorGUI.BeginDisabledGroup(_busy);
+                if (GUILayout.Button("Merge", GUILayout.Width(70)) &&
+                    EditorUtility.DisplayDialog("Merge Lore branch?",
+                        "Merge " + branch.Value + " into the current branch? Native conflicts require explicit recovery.",
+                        "Merge", "Cancel"))
+                    Schedule(() => RunMergeAsync(branch));
+                EditorGUI.EndDisabledGroup();
                 EditorGUILayout.EndHorizontal();
             }
             EditorGUILayout.EndScrollView();
@@ -181,7 +217,9 @@ namespace Lore.Unity.UI.Main
         private static RepositoryPath Key(UnityLogicalAsset asset) => asset.Asset?.Path ?? asset.Meta.Path;
         private static string Describe(FileStatusEntry asset, FileStatusEntry meta) =>
             (asset == null ? string.Empty : asset.Status.Working + "/" + asset.Status.Stage) +
-            (meta == null ? string.Empty : "  meta:" + meta.Status.Working + "/" + meta.Status.Stage);
+            (meta == null ? string.Empty : "  meta:" + meta.Status.Working + "/" + meta.Status.Stage) +
+            ((asset?.Status.Conflict == ConflictState.Conflicted ||
+              meta?.Status.Conflict == ConflictState.Conflicted) ? "  [LORE CONFLICT]" : string.Empty);
 
         private void Schedule(Func<Task> action)
         {
@@ -233,6 +271,30 @@ namespace Lore.Unity.UI.Main
                 ? "Branch switch failed: " + result.Value.Result.Error.Message
                 : "Branch switched.";
         });
+
+        private async Task RunMergeAsync(BranchName branch) => await RunAsync(async token =>
+        {
+            var result = await _controller.MergeAsync(branch, token);
+            _notice = result.IsFailure ? result.Error.Message : result.Value.Result.IsFailure
+                ? "Merge requires attention (" + result.Value.Id.Value + "): " + result.Value.Result.Error.Message
+                : "Merge completed.";
+        });
+
+        private async Task RunDiffAsync(RepositoryPath path, DiffMode mode) => await RunAsync(async token =>
+        {
+            var result = await _controller.DiffAsync(path, mode, token);
+            _diffPath = path;
+            _diff = result.IsSuccess ? result.Value : null;
+            _notice = result.IsFailure ? result.Error.Message : null;
+        });
+
+        private async Task RunAcknowledgeAsync(Lore.Unity.Infrastructure.Recovery.PendingRecovery pending) =>
+            await RunAsync(async token =>
+            {
+                var result = await _controller.AcknowledgeRecoveryAsync(pending, token);
+                _notice = result.IsSuccess ? "Recovery record acknowledged after Lore status refresh." :
+                    result.Error.Message;
+            });
 
         private async Task RunAsync(Func<CancellationToken, Task> operation)
         {

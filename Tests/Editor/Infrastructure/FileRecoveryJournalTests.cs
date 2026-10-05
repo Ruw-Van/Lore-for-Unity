@@ -68,6 +68,25 @@ namespace Lore.Unity.Tests.Infrastructure
         }
 
         [Test]
+        public void MergeConflictRemainsPendingAcrossReopenUntilAcknowledged()
+        {
+            var path = Path.Combine(Path.GetTempPath(), "lore-merge-test-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var journal = new FileRecoveryJournal(new AbsolutePath(path));
+                var id = new OperationId(Guid.NewGuid().ToString("N"));
+                var repo = new RepositoryId(new string('a', 32));
+                Assert.That(journal.BeginAsync(id, repo, "BranchMerge", CancellationToken.None).Result.IsSuccess, Is.True);
+                Assert.That(journal.LoreAppliedAsync(id, CancellationToken.None).Result.IsSuccess, Is.True);
+                var reopened = new FileRecoveryJournal(new AbsolutePath(path));
+                Assert.That(reopened.Pending().Value[0].Operation, Is.EqualTo("BranchMerge"));
+                Assert.That(reopened.CompleteAsync(id, CancellationToken.None).Result.IsSuccess, Is.True);
+                Assert.That(reopened.Pending().Value.Count, Is.EqualTo(0));
+            }
+            finally { if (Directory.Exists(path)) Directory.Delete(path, true); }
+        }
+
+        [Test]
         public void OtherProcessLockBlocksJournalReadsAndWrites()
         {
             var path = Path.Combine(Path.GetTempPath(), "lore-journal-test-" + Guid.NewGuid().ToString("N"));

@@ -28,6 +28,7 @@ namespace Lore.Unity.Tests.Application
             public ISyncBackend Sync => this;
             public IBranchBackend Branch => this;
             public ILockBackend Lock => this;
+            public IMergeBackend Merge => null;
             public int PushCalls;
             public int SwitchCalls;
             public int SyncCalls;

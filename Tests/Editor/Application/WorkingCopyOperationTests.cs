@@ -112,5 +112,21 @@ namespace Lore.Unity.Tests.Application
             Assert.That(outcome.LoreApplied, Is.True);
             Assert.That(journal.Boundaries, Is.EqualTo(2));
         }
+
+        [Test]
+        public void ConflictRefreshesUnityAndLoreButKeepsJournalPending()
+        {
+            var journal = new Journal();
+            var verifier = new Verifier();
+            var operation = new WorkingCopyOperation(new RepositoryOperationGate(), new Guard(), journal, verifier);
+            var conflict = Result.Failure(new LoreError(ErrorCode.Conflict, "Native conflict."));
+            var outcome = operation.ExecuteAsync(new RepositoryId("repo"), "BranchMerge",
+                token => Task.FromResult(conflict), CancellationToken.None, retainOnConflict: true)
+                .GetAwaiter().GetResult();
+            Assert.That(outcome.Result.Error.Code, Is.EqualTo(ErrorCode.Conflict));
+            Assert.That(outcome.LoreApplied, Is.True);
+            Assert.That(verifier.Calls, Is.EqualTo(1));
+            Assert.That(journal.Boundaries, Is.EqualTo(2));
+        }
     }
 }

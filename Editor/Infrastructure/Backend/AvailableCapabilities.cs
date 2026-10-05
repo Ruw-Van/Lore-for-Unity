@@ -28,6 +28,7 @@ namespace Lore.Unity.Infrastructure.Backend
                 case BackendCapability.Sync: return writes?.Sync != null;
                 case BackendCapability.Branch: return writes?.Branch != null;
                 case BackendCapability.Lock: return writes?.Lock != null;
+                case BackendCapability.Merge: return writes?.Merge != null;
                 default: return false;
             }
         }

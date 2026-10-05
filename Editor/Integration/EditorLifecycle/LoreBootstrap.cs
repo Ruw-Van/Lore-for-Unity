@@ -5,6 +5,7 @@ using Lore.Unity.Core.Identifiers;
 using Lore.Unity.Core.Paths;
 using Lore.Unity.Core.Errors;
 using Lore.Unity.Application.Queries;
+using Lore.Unity.Application.Diff;
 using Lore.Unity.Application.Status;
 using Lore.Unity.Core.Results;
 using Lore.Unity.Infrastructure.Recovery;
@@ -51,7 +52,11 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public static LoreError LockError => _editing?.LastError;
         public static StatusSnapshot Status => _composition?.Reads?.Store.Current;
         public static RepositoryQueries Queries => _composition?.Reads?.Queries;
+        public static DiffService Diff => _composition?.Reads?.Diff;
         public static string AssetRootPrefix => _paths?.AssetRootPrefix;
+        public static FileRecoveryJournal Recovery => _repository == null ? null : new FileRecoveryJournal(
+            new AbsolutePath(Path.Combine(Path.GetDirectoryName(UnityEngine.Application.dataPath),
+                "Library", "LoreForUnity", "Recovery")));
         public static LoreError StatusError => _projection?.Current != null ? _changes?.LastError :
             _changes?.LastError ?? _initialStatusError;
 

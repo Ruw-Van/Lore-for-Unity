@@ -12,12 +12,14 @@ namespace Lore.Unity.Infrastructure.LoreCli
 {
     // These methods are invoked under the repository gate by Application services.
     // Only known CLI v0.10.0 commands are used; no --reset or implicit PATH lookup.
-    public sealed class CliWriteAdapter : IRevisionBackend, IPushBackend, ISyncBackend, IBranchBackend, ILockBackend
+    public sealed class CliWriteAdapter : IRevisionBackend, IPushBackend, ISyncBackend, IBranchBackend,
+        ILockBackend, IMergeBackend
     {
         private readonly LoreCliRunner _runner;
         private readonly RepositoryLocations _roots;
         private readonly CliWriteEventParser _parser;
         private readonly CliStatusParser _status = new CliStatusParser();
+        private readonly CliMergeParser _merge = new CliMergeParser();
 
         public CliWriteAdapter(LoreCliRunner runner, RepositoryLocations roots, CliWriteEventParser parser)
         {
@@ -84,6 +86,14 @@ namespace Lore.Unity.Infrastructure.LoreCli
             var output = await RunAsync(repository,
                 new[] { "--json", "branch", "switch", "--", branch.Value }, token);
             return output.IsFailure ? Result.Failure(output.Error) : _parser.BranchSwitch(branch, output.Value.StandardOutput);
+        }
+
+        public async Task<Result> MergeAsync(RepositoryId repository, BranchName source, CancellationToken token)
+        {
+            if (source == null) throw new ArgumentNullException(nameof(source));
+            var output = await RunAsync(repository,
+                new[] { "--json", "--offline", "branch", "merge", "--", source.Value }, token);
+            return output.IsFailure ? Result.Failure(output.Error) : _merge.Parse(output.Value.StandardOutput);
         }
 
         public async Task<Result<IReadOnlyList<BranchName>>> ListAsync(RepositoryId repository, CancellationToken token)

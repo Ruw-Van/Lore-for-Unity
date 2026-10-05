@@ -4,7 +4,8 @@
   "references": [
     "Lore.Unity.Core.Editor",
     "Lore.Unity.Application.Editor",
-    "Lore.Unity.Integration.Editor"
+    "Lore.Unity.Integration.Editor",
+    "Lore.Unity.Infrastructure.Editor"
   ],
   "includePlatforms": [
     "Editor"

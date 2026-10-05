@@ -28,7 +28,8 @@ namespace Lore.Unity.Application.Operations
         }
 
         public async Task<WriteOutcome> ExecuteAsync(RepositoryId repository, string operation,
-            Func<CancellationToken, Task<Result>> loreWrite, CancellationToken token)
+            Func<CancellationToken, Task<Result>> loreWrite, CancellationToken token,
+            bool retainOnConflict = false)
         {
             if (repository == null) throw new ArgumentNullException(nameof(repository));
             if (loreWrite == null) throw new ArgumentNullException(nameof(loreWrite));
@@ -46,7 +47,8 @@ namespace Lore.Unity.Application.Operations
                     return new WriteOutcome(id, WriteErrors.Failure(ErrorCode.Unknown,
                         "Lore write outcome is unknown; inspect recovery journal before retry."), OperationState.Cancelled);
                 }
-                if (lore.IsFailure) return new WriteOutcome(id, lore, OperationState.Failed);
+                var conflict = retainOnConflict && lore.IsFailure && lore.Error.Code == ErrorCode.Conflict;
+                if (lore.IsFailure && !conflict) return new WriteOutcome(id, lore, OperationState.Failed);
                 // Once Lore has changed the working copy, finish safety checks even if
                 // the UI cancelled; retain the journal if finalization fails.
                 var marked = await _journal.LoreAppliedAsync(id, CancellationToken.None);
@@ -55,6 +57,9 @@ namespace Lore.Unity.Application.Operations
                 if (unity.IsFailure) return new WriteOutcome(id, unity, OperationState.Failed, true);
                 var verified = await _status.VerifyUnderLeaseAsync(repository, CancellationToken.None);
                 if (verified.IsFailure) return new WriteOutcome(id, verified, OperationState.Failed, true);
+                // Conflict is native Lore state. Keep the recovery record until
+                // the user resolves or aborts it; do not mark the merge complete.
+                if (conflict) return new WriteOutcome(id, lore, OperationState.Failed, true);
                 var complete = await _journal.CompleteAsync(id, CancellationToken.None);
                 return new WriteOutcome(id, complete,
                     complete.IsSuccess ? OperationState.Completed : OperationState.Failed, true);
