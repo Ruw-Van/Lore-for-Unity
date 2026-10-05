@@ -4,6 +4,8 @@ using Lore.Unity.Integration.Editing;
 using Lore.Unity.Core.Identifiers;
 using Lore.Unity.Core.Paths;
 using Lore.Unity.Core.Errors;
+using Lore.Unity.Application.Queries;
+using Lore.Unity.Application.Status;
 using Lore.Unity.Core.Results;
 using Lore.Unity.Infrastructure.Recovery;
 using Lore.Unity.Infrastructure.Runtime;
@@ -47,6 +49,9 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public static RepositoryId Repository => _repository;
         public static WriteBackendComposition Writes => _writes;
         public static LoreError LockError => _editing?.LastError;
+        public static StatusSnapshot Status => _composition?.Reads?.Store.Current;
+        public static RepositoryQueries Queries => _composition?.Reads?.Queries;
+        public static string AssetRootPrefix => _paths?.AssetRootPrefix;
         public static LoreError StatusError => _projection?.Current != null ? _changes?.LastError :
             _changes?.LastError ?? _initialStatusError;
 
@@ -140,6 +145,14 @@ namespace Lore.Unity.Integration.EditorLifecycle
                     "Unity editing integration must be enabled on the Editor main thread."));
             }
             finally { _enabling = null; }
+        }
+
+        public static Task<Result<UnityLogicalAssetIndex>> RefreshStatusAsync(CancellationToken token)
+        {
+            if (_projection == null || _repository == null)
+                return Task.FromResult(Result<UnityLogicalAssetIndex>.Failure(new LoreError(
+                    ErrorCode.InvalidRepository, "No verified Unity repository is available.")));
+            return _projection.RefreshAsync(_repository, token);
         }
 
         private static void OnBeforeReload()

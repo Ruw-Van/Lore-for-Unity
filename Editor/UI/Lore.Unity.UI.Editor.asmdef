@@ -3,7 +3,8 @@
   "rootNamespace": "Lore.Unity.UI",
   "references": [
     "Lore.Unity.Core.Editor",
-    "Lore.Unity.Application.Editor"
+    "Lore.Unity.Application.Editor",
+    "Lore.Unity.Integration.Editor"
   ],
   "includePlatforms": [
     "Editor"
