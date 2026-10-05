@@ -16,6 +16,7 @@ using Lore.Unity.Core.Operations;
 using Lore.Unity.Application.Backend;
 using Lore.Unity.Infrastructure.Recovery;
 using Lore.Unity.Integration.Editing;
+using Lore.Unity.Infrastructure.Runtime;
 using Lore.Unity.Core.Errors;
 using Lore.Unity.Core.Identifiers;
 using Lore.Unity.Core.Paths;
@@ -29,10 +30,20 @@ namespace Lore.Unity.Integration.EditorLifecycle
     {
         public RuntimeAvailability Availability => LoreBootstrap.Context.Availability;
         public RepositoryId Repository => LoreBootstrap.Repository;
+        public bool CanInitializeRepository => LoreBootstrap.CanInitializeRepository;
+        public Task<Result> InitializeRepositoryAsync(CancellationToken token) =>
+            LoreBootstrap.InitializeRepositoryAsync(token);
         public RepositorySnapshot DetectedRepository => LoreBootstrap.DetectedRepository;
         public string RequiredVersion => LoreBootstrap.RequiredVersion;
         public bool ReadAvailable => LoreBootstrap.Queries != null;
         public bool WriteEnabled => LoreBootstrap.Writes != null;
+        public Result<ValidatedRuntimeArtifact> RuntimeArtifact => LoreBootstrap.RuntimeArtifact;
+        public Task<Result> InstallRuntimeOfficialAsync(CancellationToken token,
+            IProgress<RuntimeInstallProgress> progress = null) =>
+            LoreBootstrap.InstallOfficialAsync(token, progress);
+        public Task<Result> InstallRuntimeFromFileAsync(AbsolutePath file, CancellationToken token,
+            IProgress<RuntimeInstallProgress> progress = null) =>
+            LoreBootstrap.InstallFromFileAsync(file, token, progress);
         public IReadOnlyList<ResolverKind> ResolverCandidates(RepositoryPath path)
         {
             var tools = RegisteredTools();

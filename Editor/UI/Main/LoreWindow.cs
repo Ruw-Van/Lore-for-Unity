@@ -87,7 +87,19 @@ namespace Lore.Unity.UI.Main
         {
             if (_controller == null) return;
             EditorGUILayout.LabelField("Runtime", _controller.Availability.ToString());
+            if (_controller.Availability != Lore.Unity.Application.Runtime.RuntimeAvailability.Ready &&
+                GUILayout.Button("Open Runtime Setup")) Lore.Unity.UI.Diagnostics.LoreDiagnosticsWindow.Open();
             EditorGUILayout.LabelField("Repository", _controller.Repository?.Value ?? "Not detected");
+            if (!_busy && _controller.CanInitializeRepository &&
+                GUILayout.Button("Initialize this Unity project with Lore"))
+            {
+                var root = System.IO.Path.GetDirectoryName(UnityEngine.Application.dataPath);
+                if (EditorUtility.DisplayDialog("Initialize local Lore repository?",
+                    "Create an offline Lore working copy at:\n" + root +
+                    "\n\nExisting project files will not be staged or pushed. The new .lore directory will be kept if verification fails.",
+                    "Initialize", "Cancel"))
+                    Schedule(() => RunInitializeRepositoryAsync());
+            }
             if (_controller.StatusError != null) EditorGUILayout.HelpBox(_controller.StatusError.Message, MessageType.Warning);
             if (_controller.LockError != null) EditorGUILayout.HelpBox(_controller.LockError.Message, MessageType.Warning);
             if (_controller.LastRefreshError != null)
@@ -358,6 +370,13 @@ namespace Lore.Unity.UI.Main
         {
             var result = await _controller.RefreshAsync(token);
             _notice = result.IsSuccess ? "Status refreshed." : result.Error.Message;
+        });
+
+        private async Task RunInitializeRepositoryAsync() => await RunAsync(async token =>
+        {
+            var result = await _controller.InitializeRepositoryAsync(token);
+            _notice = result.IsSuccess ? "Local Lore repository created and verified. Review Changes before staging." :
+                result.Error.Message;
         });
 
         private async Task RunHistoryAsync() => await RunAsync(async token =>

@@ -84,6 +84,9 @@ namespace Lore.Unity.Integration.EditorLifecycle
             return backend.IsSuccess ? new RepositoryDetector(backend.Value) : null;
         }
 
+        public LoreRepositoryInitializer CreateInitializer() =>
+            _runner == null ? null : new LoreRepositoryInitializer(_runner);
+
         public static ReadBackendComposition Create(ILoreSdkReadBridge sdkBridge,
             AbsolutePath? verifiedCliExecutable, IRepositoryOperationGate gate)
         {

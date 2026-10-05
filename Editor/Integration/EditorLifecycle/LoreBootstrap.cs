@@ -12,6 +12,7 @@ using Lore.Unity.Core.Results;
 using Lore.Unity.Core.Repository;
 using Lore.Unity.Infrastructure.Recovery;
 using Lore.Unity.Infrastructure.Runtime;
+using Lore.Unity.Infrastructure.Repository;
 using System;
 using System.IO;
 using System.Threading;
@@ -34,6 +35,9 @@ namespace Lore.Unity.Integration.EditorLifecycle
         private static UnityAssetPathMapper _paths;
         private static WriteBackendComposition _writes;
         private static Task<Result<WriteBackendComposition>> _enabling;
+        private static Task<Result> _installing;
+        private static Task<Result> _initializing;
+        private static bool _detecting;
         private static RepositoryId _repository;
         private static RepositorySnapshot _detected;
         private static LoreError _initialStatusError;
@@ -58,6 +62,21 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public static RepositoryQueries Queries => _composition?.Reads?.Queries;
         public static DiffService Diff => _composition?.Reads?.Diff;
         public static string RequiredVersion => _composition?.RequiredVersion;
+        public static bool CanInitializeRepository => (_initializing == null || _initializing.IsCompleted) &&
+            CanInitializeRepositoryCore();
+
+        private static bool CanInitializeRepositoryCore() => !_detecting && _repository == null &&
+            _composition?.Context.Availability == RuntimeAvailability.Ready &&
+            _composition.Reads?.CreateInitializer() != null &&
+            LoreRepositoryInitializer.CanInitialize(ProjectRoot());
+
+        private static AbsolutePath ProjectRoot() => new AbsolutePath(
+            Path.GetDirectoryName(UnityEngine.Application.dataPath));
+        public static Result<ValidatedRuntimeArtifact> RuntimeArtifact =>
+            _composition?.Manager == null || RuntimeComposition.CurrentPlatform() == null
+                ? Result<ValidatedRuntimeArtifact>.Failure(new LoreError(ErrorCode.UnsupportedOperation,
+                    "A valid manifest and supported platform are required."))
+                : _composition.Manager.FindArtifact(RuntimeComposition.CurrentPlatform());
         public static string AssetRootPrefix => _paths?.AssetRootPrefix;
         public static FileRecoveryJournal Recovery => _repository == null ? null : new FileRecoveryJournal(
             new AbsolutePath(Path.Combine(Path.GetDirectoryName(UnityEngine.Application.dataPath),
@@ -87,35 +106,140 @@ namespace Lore.Unity.Integration.EditorLifecycle
             try
             {
                 var layout = RuntimeLayout.ForCurrentUser(RuntimeComposition.CurrentPlatform());
-                var activated = await _composition.ActivateAsync(layout, new CliRuntimeProbe(), Reload.Token);
-                if (Reload.IsCancellationRequested) return;
-                _composition = activated;
-                if (activated.Reads == null) return;
-                var detector = activated.Reads.CreateDetector();
-                var projectRoot = new AbsolutePath(
-                    System.IO.Path.GetDirectoryName(UnityEngine.Application.dataPath));
-                var repository = await detector.DetectAsync(projectRoot, Reload.Token);
-                if (repository.IsSuccess && !Reload.IsCancellationRequested)
-                {
-                    var mapper = new UnityAssetPathMapper(projectRoot, repository.Value.Root);
-                    var projection = new UnityStatusProjection(activated.Reads.Status, activated.Reads.Store,
-                        mapper, new UnityGuidResolver());
-                    _repository = repository.Value.Id;
-                    _detected = repository.Value;
-                    _paths = mapper;
-                    _projection = projection;
-                    _changes = new UnityChangeBridge(projection, _repository, Reload.Token);
-                    var initial = await projection.RefreshAsync(repository.Value.Id, Reload.Token);
-                    if (initial.IsFailure && !Reload.IsCancellationRequested)
-                    {
-                        _initialStatusError = initial.Error;
-                        UnityChangeBridge.Hint("Assets/"); // retry on next Editor update
-                    }
-                }
+                await ActivateAndDetectAsync(layout, Reload.Token);
             }
             catch (System.OperationCanceledException) { /* Domain reload. */ }
             catch (System.IO.IOException) { /* Cache unavailable; remain Setup Required. */ }
             catch (System.UnauthorizedAccessException) { /* Cache unavailable. */ }
+        }
+
+        public static Task<Result> InstallOfficialAsync(CancellationToken token,
+            IProgress<RuntimeInstallProgress> progress = null) =>
+            StartInstallAsync((manager, platform, ct) => manager.InstallOfficialAsync(platform, ct, progress), token, progress);
+
+        public static Task<Result> InstallFromFileAsync(AbsolutePath file, CancellationToken token,
+            IProgress<RuntimeInstallProgress> progress = null) =>
+            StartInstallAsync((manager, platform, ct) => manager.InstallFromFileAsync(file, platform, ct, progress),
+                token, progress);
+
+        public static Task<Result> InitializeRepositoryAsync(CancellationToken token)
+        {
+            if (_initializing != null && !_initializing.IsCompleted)
+                return Task.FromResult(Result.Failure(new LoreError(ErrorCode.Locked,
+                    "Repository initialization is already in progress.")));
+            _initializing = InitializeRepositoryCoreAsync(token);
+            return _initializing;
+        }
+
+        private static async Task<Result> InitializeRepositoryCoreAsync(CancellationToken token)
+        {
+            try
+            {
+                if (!CanInitializeRepositoryCore())
+                    return Result.Failure(new LoreError(ErrorCode.InvalidRepository,
+                        "This project is already managed or Lore Runtime is unavailable."));
+                var root = ProjectRoot();
+                var created = await _composition.Reads.CreateInitializer().InitializeAsync(root, token);
+                if (created.IsFailure) return created;
+                if (Reload.IsCancellationRequested)
+                    return Result.Failure(new LoreError(ErrorCode.Cancelled,
+                        "Lore repository was created, but Editor reload interrupted verification. Reopen the project."));
+                var detected = await DetectCurrentProjectAsync(token);
+                if (detected.IsFailure) return Result.Failure(new LoreError(ErrorCode.InvalidRepository,
+                    "Lore repository was created, but could not be verified. Inspect it before retrying."));
+                return Result.Success();
+            }
+            catch (OperationCanceledException)
+            { return Result.Failure(new LoreError(ErrorCode.Cancelled,
+                "Repository initialization was interrupted. Check for .lore before retrying.")); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is InvalidOperationException)
+            { return Result.Failure(new LoreError(ErrorCode.InvalidRepository,
+                "Repository initialization failed. Check the project directory before retrying.")); }
+        }
+
+        private static Task<Result> StartInstallAsync(
+            Func<LoreRuntimeManager, string, CancellationToken, Task<Result>> action, CancellationToken token,
+            IProgress<RuntimeInstallProgress> progress)
+        {
+            if (_installing != null && !_installing.IsCompleted)
+                return Task.FromResult(Result.Failure(new LoreError(ErrorCode.Locked,
+                    "A runtime installation is already in progress.")));
+            _installing = InstallCoreAsync(action, token, progress);
+            return _installing;
+        }
+
+        private static async Task<Result> InstallCoreAsync(
+            Func<LoreRuntimeManager, string, CancellationToken, Task<Result>> action, CancellationToken token,
+            IProgress<RuntimeInstallProgress> progress)
+        {
+            try
+            {
+                var current = _composition;
+                var platform = RuntimeComposition.CurrentPlatform();
+                if (current?.Manager == null || platform == null)
+                    return Result.Failure(new LoreError(ErrorCode.UnsupportedOperation,
+                        "A supported platform and valid runtime manifest are required."));
+                if (current.Context.Availability == RuntimeAvailability.Ready)
+                    return Result.Failure(new LoreError(ErrorCode.ValidationFailed,
+                        "Lore Runtime is already installed and verified."));
+                var installed = await action(current.Manager, platform, token);
+                if (installed.IsFailure) return installed;
+                if (Reload.IsCancellationRequested)
+                    return Result.Failure(new LoreError(ErrorCode.Cancelled,
+                        "Assembly reload interrupted runtime installation."));
+                progress?.Report(new RuntimeInstallProgress(RuntimeInstallStage.Activating));
+                var activated = await ActivateAndDetectAsync(RuntimeLayout.ForCurrentUser(platform), token);
+                return activated;
+            }
+            catch (OperationCanceledException)
+            { return Result.Failure(new LoreError(ErrorCode.Cancelled, "Runtime installation was cancelled.")); }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException || e is InvalidOperationException)
+            { return Result.Failure(new LoreError(ErrorCode.RuntimeMissing, "Runtime installation could not be completed.")); }
+            finally { _installing = null; }
+        }
+
+        private static async Task<Result> ActivateAndDetectAsync(RuntimeLayout layout, CancellationToken token)
+        {
+            var activated = await _composition.ActivateAsync(layout, new CliRuntimeProbe(), token);
+            if (Reload.IsCancellationRequested)
+                return Result.Failure(new LoreError(ErrorCode.Cancelled, "Assembly reload interrupted runtime activation."));
+            _composition = activated;
+            if (activated.Reads == null)
+                return Result.Failure(new LoreError(ErrorCode.RuntimeCorrupted,
+                    "Installed Lore Runtime could not be activated."));
+            var detected = await DetectCurrentProjectAsync(token);
+            // A valid Runtime does not require this Unity project to be a Lore repository.
+            return detected.IsFailure && !Reload.IsCancellationRequested ? Result.Success() : detected;
+        }
+
+        private static async Task<Result> DetectCurrentProjectAsync(CancellationToken token)
+        {
+            _detecting = true;
+            try
+            {
+                var detector = _composition.Reads.CreateDetector();
+                var projectRoot = ProjectRoot();
+                var repository = await detector.DetectAsync(projectRoot, token);
+                if (repository.IsFailure) return Result.Failure(repository.Error);
+                if (Reload.IsCancellationRequested)
+                    return Result.Failure(new LoreError(ErrorCode.Cancelled, "Editor reload interrupted repository detection."));
+                var mapper = new UnityAssetPathMapper(projectRoot, repository.Value.Root);
+                var projection = new UnityStatusProjection(_composition.Reads.Status, _composition.Reads.Store,
+                    mapper, new UnityGuidResolver());
+                _repository = repository.Value.Id;
+                _detected = repository.Value;
+                _paths = mapper;
+                _projection = projection;
+                _changes = new UnityChangeBridge(projection, _repository, Reload.Token);
+                var initial = await projection.RefreshAsync(repository.Value.Id, token);
+                if (initial.IsFailure && !Reload.IsCancellationRequested)
+                {
+                    _initialStatusError = initial.Error;
+                    UnityChangeBridge.Hint("Assets/");
+                }
+                return Result.Success();
+            }
+            finally { _detecting = false; }
         }
 
         // Explicit opt-in only. UI/controller code may call this after presenting
@@ -180,6 +304,9 @@ namespace Lore.Unity.Integration.EditorLifecycle
             _editing?.Dispose();
             _editing = null;
             _writes = null;
+            _installing = null;
+            _initializing = null;
+            _detecting = false;
             _paths = null;
             _changes = null;
             _projection = null;

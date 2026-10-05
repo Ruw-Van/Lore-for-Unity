@@ -56,7 +56,14 @@ namespace Lore.Unity.Integration.EditorLifecycle
             var validated = RuntimeManifestValidator.Validate(manifest);
             if (validated.IsFailure)
                 return new RuntimeComposition(new RuntimeContext(RuntimeAvailability.SetupRequired), null);
-            var manager = new LoreRuntimeManager(validated.Value);
+            RuntimeLayout layout;
+            try { layout = RuntimeLayout.ForCurrentUser(platform); }
+            catch (InvalidOperationException)
+            { return new RuntimeComposition(new RuntimeContext(RuntimeAvailability.SetupRequired), null); }
+            var probe = new CliRuntimeProbe();
+            var manager = new LoreRuntimeManager(validated.Value, layout, new FileRuntimeLockManager(layout),
+                new ArchiveRuntimeInstaller(probe), probe, new FileRuntimeRegistry(layout),
+                new OfficialRuntimeDownloader(layout));
             if (manager.FindArtifact(platform).IsFailure)
                 return new RuntimeComposition(new RuntimeContext(RuntimeAvailability.UnsupportedPlatform), null);
             return new RuntimeComposition(new RuntimeContext(RuntimeAvailability.SetupRequired), manager,

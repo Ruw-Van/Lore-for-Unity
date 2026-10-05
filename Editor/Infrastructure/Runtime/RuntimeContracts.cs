@@ -61,6 +61,31 @@ namespace Lore.Unity.Infrastructure.Runtime
     public interface IRuntimeDownloader
     {
         // Invoked only by an explicit user Install action; never during Editor bootstrap.
-        Task<Result<AbsolutePath>> DownloadAsync(ValidatedRuntimeArtifact artifact, CancellationToken cancellationToken);
+        Task<Result<AbsolutePath>> DownloadAsync(ValidatedRuntimeArtifact artifact, CancellationToken cancellationToken,
+            IProgress<RuntimeInstallProgress> progress = null);
+    }
+
+    public enum RuntimeInstallStage
+    {
+        Downloading,
+        PreparingArchive,
+        VerifyingArchive,
+        Installing,
+        VerifyingRuntime,
+        Activating
+    }
+
+    public sealed class RuntimeInstallProgress
+    {
+        public RuntimeInstallProgress(RuntimeInstallStage stage, long bytesReceived = 0, long totalBytes = 0)
+        {
+            Stage = stage;
+            BytesReceived = bytesReceived;
+            TotalBytes = totalBytes;
+        }
+
+        public RuntimeInstallStage Stage { get; }
+        public long BytesReceived { get; }
+        public long TotalBytes { get; }
     }
 }

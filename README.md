@@ -15,7 +15,24 @@ Initial platform targets:
 
 ## Installation
 
-Installation instructions will be added with the first usable release.
+In Unity 2022.3 or later on Windows x64 or macOS arm64, open **Window > Package
+Manager > + > Add package from disk** and select this repository's `package.json`.
+Open **Window > Lore > Diagnostics** for Runtime setup. Nothing is downloaded at
+Editor startup: choose **Download and install official Lore Runtime** to fetch
+the pinned Epic Games v0.10.0 archive, or **Install Lore Runtime from local
+archive** to use a previously downloaded official archive. Both paths verify
+the archive size/SHA-256 and Lore executable before publication to the user
+cache. An existing invalid installation is not silently overwritten. A Lore
+working copy (`.lore`) must exist at the Unity project root or an ancestor to
+use Repository features. Unity Editor integration has not yet been validated
+on a host project; use a disposable project/working copy for initial trials.
+
+Once Runtime health is **Ready**, open **Window > Lore > Lore**. If this Unity
+project and its ancestors have no `.lore` working copy, **Initialize this Unity
+project with Lore** creates a local-only, offline repository at the Unity
+project root after confirmation. Existing project files are not staged or
+pushed. If `.lore` already exists but cannot be verified, initialization is
+not offered; inspect or repair the existing working copy instead.
 
 ## Conflict resolution (experimental)
 
