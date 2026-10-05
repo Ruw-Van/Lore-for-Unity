@@ -8,6 +8,7 @@ using Lore.Unity.Application.Queries;
 using Lore.Unity.Application.Diff;
 using Lore.Unity.Application.Status;
 using Lore.Unity.Core.Results;
+using Lore.Unity.Core.Repository;
 using Lore.Unity.Infrastructure.Recovery;
 using Lore.Unity.Infrastructure.Runtime;
 using System;
@@ -33,6 +34,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
         private static WriteBackendComposition _writes;
         private static Task<Result<WriteBackendComposition>> _enabling;
         private static RepositoryId _repository;
+        private static RepositorySnapshot _detected;
         private static LoreError _initialStatusError;
         private static readonly CancellationTokenSource Reload = new CancellationTokenSource();
 
@@ -48,11 +50,13 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public static RuntimeContext Context => _composition.Context;
         public static UnityLogicalAssetIndex Assets => _projection?.Current;
         public static RepositoryId Repository => _repository;
+        public static RepositorySnapshot DetectedRepository => _detected;
         public static WriteBackendComposition Writes => _writes;
         public static LoreError LockError => _editing?.LastError;
         public static StatusSnapshot Status => _composition?.Reads?.Store.Current;
         public static RepositoryQueries Queries => _composition?.Reads?.Queries;
         public static DiffService Diff => _composition?.Reads?.Diff;
+        public static string RequiredVersion => _composition?.RequiredVersion;
         public static string AssetRootPrefix => _paths?.AssetRootPrefix;
         public static FileRecoveryJournal Recovery => _repository == null ? null : new FileRecoveryJournal(
             new AbsolutePath(Path.Combine(Path.GetDirectoryName(UnityEngine.Application.dataPath),
@@ -89,6 +93,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
                     var projection = new UnityStatusProjection(activated.Reads.Status, activated.Reads.Store,
                         mapper, new UnityGuidResolver());
                     _repository = repository.Value.Id;
+                    _detected = repository.Value;
                     _paths = mapper;
                     _projection = projection;
                     _changes = new UnityChangeBridge(projection, _repository, Reload.Token);
@@ -171,6 +176,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
             _changes = null;
             _projection = null;
             _repository = null;
+            _detected = null;
             _initialStatusError = null;
             Reload.Cancel();
             EditorApplication.delayCall -= OnEditorReady;

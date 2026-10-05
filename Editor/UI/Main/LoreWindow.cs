@@ -34,6 +34,8 @@ namespace Lore.Unity.UI.Main
         private int _tab;
         private int _page;
         private long _generation = -1;
+        private Lore.Unity.Application.Status.StatusSnapshot _observedStatus;
+        private UnityLogicalAssetIndex _observedAssets;
 
         [MenuItem("Window/Lore/Lore")]
         public static void Open() => GetWindow<LoreWindow>("Lore");
@@ -54,7 +56,15 @@ namespace Lore.Unity.UI.Main
             _lifetime = null;
         }
 
-        private void OnEditorUpdate() => Repaint(); // No Lore I/O in repaint or OnGUI.
+        private void OnEditorUpdate()
+        {
+            var status = _controller?.Status;
+            var assets = _controller?.Assets;
+            if (ReferenceEquals(status, _observedStatus) && ReferenceEquals(assets, _observedAssets)) return;
+            _observedStatus = status;
+            _observedAssets = assets;
+            Repaint(); // O(1) snapshot check; no Lore I/O in repaint or OnGUI.
+        }
 
         private void OnGUI()
         {

@@ -1,0 +1,23 @@
+name: Validate UPM metadata
+on:
+  pull_request:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+jobs:
+  offline-metadata:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate package and pinned runtime metadata without network access to Lore
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [ "$REF_TYPE" = tag ]; then
+            python3 scripts/validate-package.py "$REF_NAME"
+          else
+            python3 scripts/validate-package.py
+          fi

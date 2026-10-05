@@ -8,10 +8,13 @@ namespace Lore.Unity.UI.Main
     [InitializeOnLoad]
     public static class LoreProjectOverlay
     {
+        private static Lore.Unity.Integration.Assets.UnityLogicalAssetIndex _observed;
         static LoreProjectOverlay()
         {
             EditorApplication.projectWindowItemOnGUI -= Draw;
             EditorApplication.projectWindowItemOnGUI += Draw;
+            EditorApplication.update -= RefreshWhenChanged;
+            EditorApplication.update += RefreshWhenChanged;
             AssemblyReloadEvents.beforeAssemblyReload -= Unregister;
             AssemblyReloadEvents.beforeAssemblyReload += Unregister;
         }
@@ -19,7 +22,16 @@ namespace Lore.Unity.UI.Main
         private static void Unregister()
         {
             EditorApplication.projectWindowItemOnGUI -= Draw;
+            EditorApplication.update -= RefreshWhenChanged;
             AssemblyReloadEvents.beforeAssemblyReload -= Unregister;
+        }
+
+        private static void RefreshWhenChanged()
+        {
+            var current = LoreBootstrap.Assets;
+            if (ReferenceEquals(_observed, current)) return;
+            _observed = current;
+            EditorApplication.RepaintProjectWindow();
         }
 
         private static void Draw(string guid, Rect rect)

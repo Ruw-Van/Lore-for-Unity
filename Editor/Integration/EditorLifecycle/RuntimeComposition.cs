@@ -28,6 +28,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public RuntimeContext Context { get; }
         public LoreRuntimeManager Manager { get; }
         public ReadBackendComposition Reads { get; }
+        public string RequiredVersion => _manifest?.LoreVersion.Value;
 
         public Result<WriteBackendComposition> CreateWrites(IWorkingCopyGuard guard, FileRecoveryJournal journal)
         {

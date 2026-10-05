@@ -5,10 +5,12 @@ using System.Threading.Tasks;
 using Lore.Unity.Application.Operations;
 using Lore.Unity.Application.CheckIn;
 using Lore.Unity.Application.Diff;
+using Lore.Unity.Application.Diagnostics;
 using Lore.Unity.Application.Queries;
 using Lore.Unity.Application.Runtime;
 using Lore.Unity.Application.Status;
 using Lore.Unity.Core.Status;
+using Lore.Unity.Core.Repository;
 using Lore.Unity.Infrastructure.Recovery;
 using Lore.Unity.Core.Errors;
 using Lore.Unity.Core.Identifiers;
@@ -23,11 +25,26 @@ namespace Lore.Unity.Integration.EditorLifecycle
     {
         public RuntimeAvailability Availability => LoreBootstrap.Context.Availability;
         public RepositoryId Repository => LoreBootstrap.Repository;
+        public RepositorySnapshot DetectedRepository => LoreBootstrap.DetectedRepository;
+        public string RequiredVersion => LoreBootstrap.RequiredVersion;
+        public bool ReadAvailable => LoreBootstrap.Queries != null;
+        public bool WriteEnabled => LoreBootstrap.Writes != null;
         public StatusSnapshot Status => LoreBootstrap.Status;
         public UnityLogicalAssetIndex Assets => LoreBootstrap.Assets;
         public LoreError StatusError => LoreBootstrap.StatusError;
         public LoreError LockError => LoreBootstrap.LockError;
         public LoreError LastRefreshError { get; private set; }
+
+        public DiagnosticsSummary Diagnostics()
+        {
+            var pending = PendingRecovery();
+            var status = Status;
+            return new DiagnosticsSummary("0.1.0", UnityEngine.Application.unityVersion,
+                LoreBootstrap.RequiredVersion, Availability.ToString(), Repository != null,
+                status == null || Assets == null || StatusError != null,
+                status?.Generation, status?.RefreshedUtc,
+                pending.IsSuccess ? pending.Value.Count : -1, status?.Entries.Count ?? -1);
+        }
 
         public Result<IReadOnlyList<PendingRecovery>> PendingRecovery() =>
             LoreBootstrap.Recovery != null ? LoreBootstrap.Recovery.Pending() :
