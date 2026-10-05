@@ -56,7 +56,8 @@ namespace Lore.Unity.Integration.EditorLifecycle
                 return Result<ConflictService>.Failure(new Lore.Unity.Core.Errors.LoreError(
                     Lore.Unity.Core.Errors.ErrorCode.UnsupportedOperation, "Verified CLI is required for conflict recovery."));
             var backend = new CliWriteAdapter(_runner, _roots, new CliWriteEventParser());
-            return Result<ConflictService>.Success(new ConflictService(backend, _cliRead, _gate, guard, journal));
+            return Result<ConflictService>.Success(new ConflictService(backend, _cliRead, _gate, guard, journal,
+                new FileConflictTextWorkspace(_roots), new ExternalMergeRunner(), backend));
         }
 
         // Not invoked at Editor startup. A caller must provide safety/recovery

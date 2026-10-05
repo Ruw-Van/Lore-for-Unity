@@ -1,0 +1,8 @@
+# 競合解決と外部ツール
+
+- `Window > Lore > Settings` は複数の外部 merge tool を `UserSettings/LoreForUnityMergeTools.asset` に登録する。共有 policy や Lore native 設定を変更しない。各ツールは表示名、絶対 executable path、1 行 1 argument token を持つ。`{base}`／`{mine}`／`{theirs}`／`{result}` が必須。PATH 検索や shell 経由の暗黙実行、秘密情報のログ・診断 export は行わない。
+- Changes で Lore Status が競合と報告し、適用済み BranchMerge Recovery が存在するときだけ解決を提示する。自動 text は両側が同じ、片側が base と同じ等の一意な場合のみ採用。Unity YAML は `%YAML 1.1` と object anchor がある `.unity`／`.prefab`／`.asset` に限り、同一インデントの平坦な一意 field に対する非重複変更のみ結合する。入れ子 YAML、重複 field、両側が異なる値に変更した field は拒否する。構造化解決は Unity の完全な YAML AST ではない。
+- 手動 text は diff3 をロードし、利用者が競合マーカーを除いて適用する。外部 tool は base／mine／theirs の全ファイルコピーを一時領域で作り、成功終了時の UTF-8 result のみを検証する。8 MiB 上限、strict UTF-8、未解決マーカーや NUL は拒否する。結果が生成されても元ファイルの SHA-256 が変わっていれば置換しない。tool は利用者の明示確認を必要とし、設定変更後の古い選択は拒否する。
+- 解決は Repository gate、Unity の未保存 Scene／Prefab と Import 安全確認、適用済み Recovery Journal、Lore Status の事前・事後照会を通す。編集した内容を CLI で Stage してから `branch merge resolve` し、終了イベントと staged／conflict state を検証する。成功でも Recovery は自動完了せず、残る競合を確認してから手動承認する。Asset と `.meta` の両方が競合する場合、片側だけの text/external 解決は拒否し、Lore の同一版選択を使う。
+- 外部 tool が終了しないときは 10 分で停止する。正常終了時は既知の一時ファイルを削除するが、Unity／OS の異常終了時には OS temp にコピーが残る可能性がある。登録する executable は信頼できるものだけを使い、argument template に秘密情報を記録しない。
+- ローカル C# 9.0 ビルド、スタブテスト、偽の外部 tool によるオフライン process 起動（正常／異常終了）を確認。使い捨て Lore Repository では別 Branch の相反する変更から native conflict を作成し、編集後の `stage` → `branch merge resolve` の成功イベントと `flagConflictUnresolved: false` を確認した。Unity 実機／Test Runner と Lore 外部サーバ接続テストは実施しない。実際の Unity AssetDatabase import とこの native 解決経路の組合せは未検証であり、Release Ready ではない。

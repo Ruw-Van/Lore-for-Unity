@@ -13,7 +13,7 @@ namespace Lore.Unity.Infrastructure.LoreCli
     // These methods are invoked under the repository gate by Application services.
     // Only known CLI v0.10.0 commands are used; no --reset or implicit PATH lookup.
     public sealed class CliWriteAdapter : IRevisionBackend, IPushBackend, ISyncBackend, IBranchBackend,
-        ILockBackend, IMergeBackend, IConflictBackend
+        ILockBackend, IMergeBackend, IConflictBackend, Lore.Unity.Application.Conflicts.IEditedConflictBackend
     {
         private readonly LoreCliRunner _runner;
         private readonly RepositoryLocations _roots;
@@ -107,6 +107,18 @@ namespace Lore.Unity.Infrastructure.LoreCli
                 choice == ConflictChoice.Mine ? "mine" : "theirs", "--" };
             foreach (var path in paths) args.Add(path.Value);
             var output = await RunAsync(repository, args, token);
+            return output.IsFailure ? Result.Failure(output.Error) :
+                _resolve.Parse(repository, paths, output.Value.StandardOutput);
+        }
+
+        public async Task<Result> StageAndResolveAsync(RepositoryId repository, RepositoryPath path,
+            CancellationToken token)
+        {
+            var paths = new[] { path };
+            var staged = await StageAsync(repository, paths, token);
+            if (staged.IsFailure) return staged;
+            var output = await RunAsync(repository,
+                new[] { "--json", "--offline", "branch", "merge", "resolve", "--", path.Value }, token);
             return output.IsFailure ? Result.Failure(output.Error) :
                 _resolve.Parse(repository, paths, output.Value.StandardOutput);
         }

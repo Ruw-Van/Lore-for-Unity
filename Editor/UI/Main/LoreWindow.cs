@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Lore.Unity.Application.Backend;
+using Lore.Unity.Application.Conflicts;
 using Lore.Unity.Application.Diff;
 using Lore.Unity.Application.Queries;
 using Lore.Unity.Core.Identifiers;
@@ -40,6 +41,11 @@ namespace Lore.Unity.UI.Main
         private UnityLogicalAssetIndex _observedAssets;
         private Result<IReadOnlyList<PendingRecovery>> _pending;
         private double _nextRecoveryScan;
+        private readonly List<ExternalMergeTool> _tools = new List<ExternalMergeTool>();
+        private string _toolError;
+        private ConflictDraft _draft;
+        private string _editedText;
+        private OperationId _draftRecovery;
 
         [MenuItem("Window/Lore/Lore")]
         public static void Open() => GetWindow<LoreWindow>("Lore");
@@ -48,6 +54,7 @@ namespace Lore.Unity.UI.Main
         {
             _controller = new LoreWindowController();
             _lifetime = new CancellationTokenSource();
+            LoadTools();
             EditorApplication.update -= OnEditorUpdate;
             EditorApplication.update += OnEditorUpdate;
         }
@@ -160,12 +167,21 @@ namespace Lore.Unity.UI.Main
             if (_selected.Count == 1)
                 foreach (var path in _selected)
                 {
-                    var conflicted = index.TryGet(path, out var selectedAsset) &&
+                    var hasAsset = index.TryGet(path, out var selectedAsset);
+                    FileStatusEntry repositoryFile = null;
+                    if (!hasAsset)
+                        foreach (var file in index.RepositoryFiles)
+                            if (file.Path.Equals(path)) { repositoryFile = file; break; }
+                    var conflicted = (hasAsset &&
                         (selectedAsset.Asset?.Status.Conflict == ConflictState.Conflicted ||
-                         selectedAsset.Meta?.Status.Conflict == ConflictState.Conflicted);
+                         selectedAsset.Meta?.Status.Conflict == ConflictState.Conflicted)) ||
+                         repositoryFile?.Status.Conflict == ConflictState.Conflicted;
                     if (conflicted)
                     {
-                        var options = _controller.ResolverCandidates(path);
+                        var conflictPath = repositoryFile != null ? repositoryFile.Path :
+                            selectedAsset.Asset?.Status.Conflict == ConflictState.Conflicted ?
+                                selectedAsset.Asset.Path : selectedAsset.Meta.Path;
+                        var options = new ConflictResolverChain(_tools.Count > 0).Candidates(path);
                         EditorGUILayout.HelpBox("Lore native conflict. Resolver priority: " +
                             string.Join(" → ", options) +
                             ". Binary choice discards one version; review Diff before proceeding.",
@@ -175,8 +191,13 @@ namespace Lore.Unity.UI.Main
                                 if (recovery.Operation == "BranchMerge" && recovery.LoreApplied &&
                                     recovery.Repository.Equals(_controller.Repository))
                                 {
-                                    DrawChoice(recovery, path, ConflictChoice.Mine, "Keep mine");
-                                    DrawChoice(recovery, path, ConflictChoice.Theirs, "Keep theirs");
+                                    if (hasAsset && selectedAsset.Asset?.Status.Conflict == ConflictState.Conflicted &&
+                                        selectedAsset.Meta?.Status.Conflict == ConflictState.Conflicted)
+                                        EditorGUILayout.HelpBox("Asset and .meta both conflict. Choose a version " +
+                                            "for the pair before using text or external resolution.", MessageType.Warning);
+                                    else DrawTextResolution(recovery, conflictPath);
+                                    DrawChoice(recovery, conflictPath, ConflictChoice.Mine, "Keep mine");
+                                    DrawChoice(recovery, conflictPath, ConflictChoice.Theirs, "Keep theirs");
                                 }
                     }
                 }
@@ -257,6 +278,59 @@ namespace Lore.Unity.UI.Main
         }
 
         private static RepositoryPath Key(UnityLogicalAsset asset) => asset.Asset?.Path ?? asset.Meta.Path;
+
+        private void LoadTools()
+        {
+            var loaded = _controller.RegisteredTools();
+            _tools.Clear();
+            _toolError = loaded.IsFailure ? loaded.Error.Message : null;
+            if (loaded.IsSuccess) _tools.AddRange(loaded.Value);
+        }
+
+        private void DrawTextResolution(PendingRecovery recovery, RepositoryPath path)
+        {
+            if (_toolError != null) EditorGUILayout.HelpBox(_toolError, MessageType.Warning);
+            if (GUILayout.Button("External tool settings")) Lore.Unity.UI.Settings.LoreSettingsWindow.Open();
+            if (GUILayout.Button("Reload registered tools")) LoadTools();
+            EditorGUI.BeginDisabledGroup(_busy);
+            if (GUILayout.Button("Try safe automatic text / Unity YAML resolution") &&
+                EditorUtility.DisplayDialog("Resolve text automatically?",
+                    "Only unambiguous diff3 blocks will be applied. Asset/.meta joint conflicts are rejected. " +
+                    "The result is staged and marked resolved by Lore; inspect before acknowledging recovery.",
+                    "Resolve", "Cancel"))
+                Schedule(() => RunTextResolutionAsync(recovery.Id, path,
+                    new TextResolutionRequest(TextResolutionMode.Automatic)));
+            foreach (var tool in _tools)
+            {
+                if (GUILayout.Button("Resolve with " + tool.Name) &&
+                    EditorUtility.DisplayDialog("Run trusted external merge tool?",
+                        "Run " + tool.Name + " on temporary copies of this conflict? Its result replaces " +
+                        path.Value + " after validation. Inspect the result before acknowledging recovery.",
+                        "Run tool", "Cancel"))
+                    Schedule(() => RunTextResolutionAsync(recovery.Id, path,
+                        new TextResolutionRequest(TextResolutionMode.External, tool: tool)));
+            }
+            if (GUILayout.Button("Load conflicted text for manual editing"))
+                Schedule(() => RunPreviewAsync(recovery.Id, path));
+            EditorGUI.EndDisabledGroup();
+            if (_draft != null && _draft.Path.Equals(path) && _draftRecovery.Equals(recovery.Id))
+            {
+                EditorGUILayout.LabelField("Resolution draft (working copy is unchanged until Apply)");
+                _editedText = EditorGUILayout.TextArea(_editedText);
+                EditorGUI.BeginDisabledGroup(_busy);
+                if (GUILayout.Button("Apply edited text") &&
+                    EditorUtility.DisplayDialog("Apply edited conflict text?",
+                        "Replace, stage and mark this file resolved in Lore? The recovery record remains pending.",
+                        "Apply", "Cancel"))
+                {
+                    var draft = _draft;
+                    var text = _editedText;
+                    Schedule(() => RunTextResolutionAsync(recovery.Id, path,
+                        new TextResolutionRequest(TextResolutionMode.Manual, draft, text)));
+                }
+                EditorGUI.EndDisabledGroup();
+            }
+        }
 
         private void DrawChoice(PendingRecovery pending, RepositoryPath path,
             ConflictChoice choice, string label)
@@ -357,6 +431,29 @@ namespace Lore.Unity.UI.Main
             _notice = result.IsFailure ? result.Error.Message : result.Value.Result.IsFailure
                 ? "Lore resolution requires inspection: " + result.Value.Result.Error.Message
                 : "Lore resolved the selected file. Inspect remaining conflicts before acknowledging recovery.";
+        });
+
+        private async Task RunPreviewAsync(OperationId id, RepositoryPath path) => await RunAsync(async token =>
+        {
+            var result = await _controller.PreviewConflictAsync(id, path, token);
+            _draft = null;
+            if (result.IsFailure) { _notice = result.Error.Message; return; }
+            if (result.Value.Original.Length > 256000)
+            { _notice = "Conflict text is too large for the Editor; try a registered external tool."; return; }
+            _draft = result.Value;
+            _draftRecovery = id;
+            _editedText = result.Value.Original;
+            _notice = "Remove conflict markers and review the text before applying.";
+        });
+
+        private async Task RunTextResolutionAsync(OperationId id, RepositoryPath path,
+            TextResolutionRequest request) => await RunAsync(async token =>
+        {
+            var result = await _controller.ResolveTextAsync(id, path, request, token);
+            _notice = result.IsFailure ? result.Error.Message : result.Value.Result.IsFailure
+                ? "Resolution requires inspection: " + result.Value.Result.Error.Message
+                : "Lore staged and resolved this file. Inspect changes before acknowledging recovery.";
+            if (result.IsSuccess && result.Value.Result.IsSuccess) _draft = null;
         });
 
         private async Task RunAsync(Func<CancellationToken, Task> operation)

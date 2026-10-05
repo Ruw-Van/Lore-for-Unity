@@ -15,6 +15,7 @@ using Lore.Unity.Core.Repository;
 using Lore.Unity.Core.Operations;
 using Lore.Unity.Application.Backend;
 using Lore.Unity.Infrastructure.Recovery;
+using Lore.Unity.Integration.Editing;
 using Lore.Unity.Core.Errors;
 using Lore.Unity.Core.Identifiers;
 using Lore.Unity.Core.Paths;
@@ -32,8 +33,56 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public string RequiredVersion => LoreBootstrap.RequiredVersion;
         public bool ReadAvailable => LoreBootstrap.Queries != null;
         public bool WriteEnabled => LoreBootstrap.Writes != null;
-        public IReadOnlyList<ResolverKind> ResolverCandidates(RepositoryPath path) =>
-            new ConflictResolverChain().Candidates(path);
+        public IReadOnlyList<ResolverKind> ResolverCandidates(RepositoryPath path)
+        {
+            var tools = RegisteredTools();
+            return new ConflictResolverChain(tools.IsSuccess && tools.Value.Count > 0).Candidates(path);
+        }
+
+        public Result<IReadOnlyList<ExternalMergeTool>> RegisteredTools() =>
+            UnityExternalMergeToolSettings.instance.Read();
+
+        public Task<Result<ConflictDraft>> PreviewConflictAsync(OperationId id, RepositoryPath path,
+            CancellationToken token)
+        {
+            var service = LoreBootstrap.CreateConflictRecovery();
+            return service.IsSuccess && Repository != null ? service.Value.PreviewAsync(id, Repository, path, token) :
+                Task.FromResult(Result<ConflictDraft>.Failure(service.IsFailure ? service.Error : Unavailable()));
+        }
+
+        public async Task<Result<WriteOutcome>> ResolveTextAsync(OperationId id, RepositoryPath path,
+            TextResolutionRequest request, CancellationToken token)
+        {
+            var service = LoreBootstrap.CreateConflictRecovery();
+            if (service.IsFailure || Repository == null)
+                return Result<WriteOutcome>.Failure(service.IsFailure ? service.Error : Unavailable());
+            if (request.Mode == TextResolutionMode.External)
+            {
+                var tools = RegisteredTools();
+                if (tools.IsFailure) return Result<WriteOutcome>.Failure(tools.Error);
+                var registered = false;
+                foreach (var tool in tools.Value)
+                {
+                    if (tool.Name != request.Tool?.Name || tool.Executable != request.Tool.Executable ||
+                        tool.Arguments.Count != request.Tool.Arguments.Count) continue;
+                    registered = true;
+                    for (var i = 0; i < tool.Arguments.Count; i++)
+                        if (tool.Arguments[i] != request.Tool.Arguments[i]) registered = false;
+                    if (registered) break;
+                }
+                if (!registered) return Result<WriteOutcome>.Failure(new LoreError(ErrorCode.ValidationFailed,
+                    "External tool settings changed. Refresh the registered tool list."));
+            }
+            var outcome = await service.Value.ResolveTextAsync(id, Repository, path, request, token);
+            if (outcome.LoreApplied)
+            {
+                await RefreshAfterWriteAsync(CancellationToken.None);
+                if (outcome.Result.IsSuccess && LastRefreshError != null)
+                    outcome = new WriteOutcome(outcome.Id, Result.Failure(LastRefreshError),
+                        OperationState.Failed, true);
+            }
+            return Result<WriteOutcome>.Success(outcome);
+        }
 
         public async Task<Result<WriteOutcome>> ChooseVersionAsync(OperationId recoveryId,
             RepositoryPath path, ConflictChoice choice, CancellationToken token)
@@ -42,8 +91,13 @@ namespace Lore.Unity.Integration.EditorLifecycle
             if (service.IsFailure || Repository == null)
                 return Result<WriteOutcome>.Failure(service.IsFailure ? service.Error : Unavailable());
             var outcome = await service.Value.ChooseAsync(recoveryId, Repository, path, choice, token);
-            if (outcome.LoreApplied && !token.IsCancellationRequested)
-                await RefreshAfterWriteAsync(token);
+            if (outcome.LoreApplied)
+            {
+                await RefreshAfterWriteAsync(CancellationToken.None);
+                if (outcome.Result.IsSuccess && LastRefreshError != null)
+                    outcome = new WriteOutcome(outcome.Id, Result.Failure(LastRefreshError),
+                        OperationState.Failed, true);
+            }
             return Result<WriteOutcome>.Success(outcome);
         }
         public StatusSnapshot Status => LoreBootstrap.Status;
