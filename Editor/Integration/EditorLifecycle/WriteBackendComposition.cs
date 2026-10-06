@@ -24,6 +24,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
             var session = new BackendSession(new BackendResolver(new AvailableCapabilities(null, set)), null, set);
             var workingCopy = new WorkingCopyOperation(gate, guard, journal, new WorkingCopyStatusVerifier(read));
             CheckIn = new CheckInService(session, gate, guard);
+            StageSelection = new StageSelectionService(session, gate, guard);
             Push = new PushService(session, gate);
             Sync = new SyncService(session, workingCopy);
             Branch = new BranchService(session, workingCopy, gate);
@@ -33,6 +34,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
         }
 
         public CheckInService CheckIn { get; }
+        public StageSelectionService StageSelection { get; }
         public PushService Push { get; }
         public SyncService Sync { get; }
         public BranchService Branch { get; }

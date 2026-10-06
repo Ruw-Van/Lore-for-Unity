@@ -27,6 +27,14 @@ namespace Lore.Unity.Application.CheckIn
         }
 
         public async Task<CheckInOutcome> ExecuteAsync(CheckInPlan plan, CancellationToken token)
+            => await ExecuteCoreAsync(plan, token, false);
+
+        // Explicit second phase: never stages or commits unselected paths.
+        public Task<CheckInOutcome> CommitStagedAsync(CheckInPlan plan, CancellationToken token)
+            => ExecuteCoreAsync(plan, token, true);
+
+        private async Task<CheckInOutcome> ExecuteCoreAsync(CheckInPlan plan, CancellationToken token,
+            bool requireStaged)
         {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
             var id = WriteErrors.NewId();
@@ -66,17 +74,26 @@ namespace Lore.Unity.Application.CheckIn
                 var found = new HashSet<RepositoryPath>();
                 foreach (var entry in before.Value)
                 {
-                    if (entry.Status.Stage != StageState.Unstaged)
+                    if (entry.Status.Stage != StageState.Unstaged &&
+                        (!requireStaged || !selected.Contains(entry.Path) &&
+                         !StageSelectionService.IsAncestorOfSelection(entry.Path, selected)))
                         return Failed(id, new LoreError(ErrorCode.ValidationFailed,
-                            "Existing staged changes must be resolved before Check In."));
-                    if (selected.Contains(entry.Path) && entry.Status.Working != WorkingState.Unchanged)
+                            "Unrelated staged changes must be resolved before Check In."));
+                    if (selected.Contains(entry.Path) && (entry.Status.Working != WorkingState.Unchanged ||
+                                                         entry.Status.Stage == StageState.Staged))
                     {
+                        if (entry.Status.Conflict != ConflictState.None)
+                            return Failed(id, new LoreError(ErrorCode.Conflict,
+                                "Resolve selected Lore conflicts before Check In."));
                         changes.Add(entry.Path);
                         var asset = entry.Path.Value.StartsWith(plan.AssetRootPrefix, StringComparison.Ordinal) &&
                             entry.Path.Value.EndsWith(".meta", StringComparison.Ordinal)
                             ? new RepositoryPath(entry.Path.Value.Substring(0, entry.Path.Value.Length - ".meta".Length))
                             : entry.Path;
                         found.Add(asset);
+                        if (requireStaged && entry.Status.Stage != StageState.Staged)
+                            return Failed(id, new LoreError(ErrorCode.ValidationFailed,
+                                "Every selected file must be staged before Check In."));
                     }
                 }
                 if (!found.SetEquals(logical))
@@ -85,27 +102,39 @@ namespace Lore.Unity.Application.CheckIn
                 if (changes.Count == 0)
                     return Failed(id, new LoreError(ErrorCode.ValidationFailed, "No changes selected for Check In."));
 
-                Result staged;
-                try { staged = await revision.Value.StageAsync(plan.Repository, changes, token); }
-                catch (OperationCanceledException)
+                if (!requireStaged)
                 {
-                    return new CheckInOutcome(id, WriteErrors.Failure<RevisionSignature>(ErrorCode.Cancelled,
-                        "Stage may have changed; re-query Lore before retry."), null, OperationState.Cancelled);
+                    Result staged;
+                    try { staged = await revision.Value.StageAsync(plan.Repository, changes, token); }
+                    catch (OperationCanceledException)
+                    {
+                        return new CheckInOutcome(id, WriteErrors.Failure<RevisionSignature>(ErrorCode.Cancelled,
+                            "Stage may have changed; re-query Lore before retry."), null, OperationState.Cancelled);
+                    }
+                    if (staged.IsFailure) return Failed(id, staged.Error);
                 }
-                if (staged.IsFailure) return Failed(id, staged.Error);
                 Result<IReadOnlyList<FileStatusEntry>> after;
-                try { after = await ReadUnderLease(status.Value, plan.Repository, changes, token); }
-                catch (OperationCanceledException)
+                if (requireStaged) after = before;
+                else
                 {
-                    return new CheckInOutcome(id, WriteErrors.Failure<RevisionSignature>(ErrorCode.Cancelled,
-                        "Stage was applied; verification was cancelled."), null, OperationState.Cancelled);
+                    try { after = await ReadUnderLease(status.Value, plan.Repository, changes, token); }
+                    catch (OperationCanceledException)
+                    {
+                        return new CheckInOutcome(id, WriteErrors.Failure<RevisionSignature>(ErrorCode.Cancelled,
+                            "Stage was applied; verification was cancelled."), null, OperationState.Cancelled);
+                    }
+                    if (after.IsFailure) return Failed(id, after.Error);
                 }
-                if (after.IsFailure) return Failed(id, after.Error);
                 var verified = new HashSet<RepositoryPath>();
                 foreach (var entry in after.Value)
                 {
-                    if (!selected.Contains(entry.Path) || entry.Status.Stage != StageState.Staged ||
-                        !verified.Add(entry.Path))
+                    if (!selected.Contains(entry.Path))
+                    {
+                        if (requireStaged) continue; // Full status includes unrelated, unstaged changes.
+                        return Failed(id, new LoreError(ErrorCode.ValidationFailed,
+                            "Stage verification failed; staged changes were not rolled back."));
+                    }
+                    if (entry.Status.Stage != StageState.Staged || !verified.Add(entry.Path))
                         return Failed(id, new LoreError(ErrorCode.ValidationFailed,
                             "Stage verification failed; staged changes were not rolled back."));
                 }

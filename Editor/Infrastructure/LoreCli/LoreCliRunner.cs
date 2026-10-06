@@ -30,6 +30,9 @@ namespace Lore.Unity.Infrastructure.LoreCli
     {
         private readonly AbsolutePath _executable;
         private const int MaxChars = 1024 * 1024;
+        // Full status scans emit a JSON event for every file in a Unity project.
+        // Keep other commands at the smaller limit; never allow unlimited output.
+        public const int MaxStatusChars = 32 * 1024 * 1024;
 
         public LoreCliRunner(AbsolutePath verifiedExecutable)
         {
@@ -38,15 +41,18 @@ namespace Lore.Unity.Infrastructure.LoreCli
         }
 
         public Task<Result<CliOutput>> RunAsync(AbsolutePath repositoryRoot,
-            IReadOnlyList<string> arguments, CancellationToken cancellationToken)
+            IReadOnlyList<string> arguments, CancellationToken cancellationToken, int maxStandardOutputChars = MaxChars)
         {
             if (string.IsNullOrEmpty(repositoryRoot.Value)) throw new ArgumentException("Repository root required.", nameof(repositoryRoot));
             if (arguments == null) throw new ArgumentNullException(nameof(arguments));
-            return Task.Run(() => RunCoreAsync(repositoryRoot, arguments, cancellationToken), cancellationToken);
+            if (maxStandardOutputChars < 1 || maxStandardOutputChars > MaxStatusChars)
+                throw new ArgumentOutOfRangeException(nameof(maxStandardOutputChars));
+            return Task.Run(() => RunCoreAsync(repositoryRoot, arguments, cancellationToken,
+                maxStandardOutputChars), cancellationToken);
         }
 
         private async Task<Result<CliOutput>> RunCoreAsync(AbsolutePath repositoryRoot,
-            IReadOnlyList<string> arguments, CancellationToken cancellationToken)
+            IReadOnlyList<string> arguments, CancellationToken cancellationToken, int maxStandardOutputChars)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (!File.Exists(_executable.Value)) return Failure(ErrorCode.RuntimeMissing, "Configured Lore CLI is missing.");
@@ -76,14 +82,20 @@ namespace Lore.Unity.Infrastructure.LoreCli
                     using (cancellationToken.Register(() => { try { if (!process.HasExited) process.Kill(); }
                         catch (InvalidOperationException) { } catch (Win32Exception) { } }))
                     {
-                        var stdout = ReadBoundedAsync(process.StandardOutput);
-                        var stderr = ReadBoundedAsync(process.StandardError);
+                        var stdout = ReadBoundedAsync(process.StandardOutput, maxStandardOutputChars);
+                        var stderr = ReadBoundedAsync(process.StandardError, MaxChars);
                         await Task.Run(() => process.WaitForExit());
                         var output = await stdout;
                         var error = await stderr;
                         cancellationToken.ThrowIfCancellationRequested();
-                        if (output == null || error == null)
-                            return Failure(ErrorCode.ValidationFailed, "Lore CLI output exceeded the limit.");
+                        if (output == null)
+                            return Failure(ErrorCode.ValidationFailed,
+                                maxStandardOutputChars == MaxStatusChars
+                                    ? "Lore CLI status output exceeded 32 MiB. Reduce the number of scanned files."
+                                    : "Lore CLI standard output exceeded 1 MiB.");
+                        if (error == null)
+                            return Failure(ErrorCode.ValidationFailed,
+                                "Lore CLI standard error exceeded the limit.");
                         return Result<CliOutput>.Success(new CliOutput(process.ExitCode, output, error));
                     }
                 }
@@ -93,7 +105,7 @@ namespace Lore.Unity.Infrastructure.LoreCli
             catch (IOException) { return Failure(ErrorCode.Unknown, "Lore CLI I/O failed."); }
         }
 
-        private static async Task<string> ReadBoundedAsync(StreamReader reader)
+        private static async Task<string> ReadBoundedAsync(StreamReader reader, int maxChars)
         {
             var output = new StringBuilder();
             var buffer = new char[4096];
@@ -101,7 +113,7 @@ namespace Lore.Unity.Infrastructure.LoreCli
             int count;
             while ((count = await reader.ReadAsync(buffer, 0, buffer.Length)) > 0)
             {
-                if (output.Length + count > MaxChars) overflow = true;
+                if (output.Length + count > maxChars) overflow = true;
                 if (!overflow) output.Append(buffer, 0, count);
             }
             return overflow ? null : output.ToString();

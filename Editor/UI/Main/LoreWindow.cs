@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using Lore.Unity.Application.Backend;
+using Lore.Unity.Application.CheckIn;
 using Lore.Unity.Application.Conflicts;
 using Lore.Unity.Application.Diff;
 using Lore.Unity.Application.Queries;
@@ -32,7 +33,10 @@ namespace Lore.Unity.UI.Main
         private string _diff;
         private RepositoryPath _diffPath;
         private DiffMode _diffMode = DiffMode.Simple;
-        private bool _pushAfterCommit = true;
+        private bool _pushAfterCommit;
+        private StageSelectionProgress _stageProgress;
+        private bool _staging;
+        private CancellationTokenSource _stageCancellation;
         private bool _busy;
         private int _tab;
         private int _page;
@@ -116,6 +120,17 @@ namespace Lore.Unity.UI.Main
                         Schedule(() => RunAcknowledgeAsync(item));
                 }
             if (!string.IsNullOrEmpty(_notice)) EditorGUILayout.HelpBox(_notice, MessageType.Info);
+            if (_stageProgress != null)
+            {
+                var fraction = _stageProgress.Total == 0 ? 0f :
+                    (float)_stageProgress.Completed / _stageProgress.Total;
+                EditorGUI.ProgressBar(EditorGUILayout.GetControlRect(false, EditorGUIUtility.singleLineHeight),
+                    fraction, "Staging " + _stageProgress.Completed + " / " + _stageProgress.Total + " assets");
+                if (!string.IsNullOrEmpty(_stageProgress.Current.Value))
+                    EditorGUILayout.LabelField("Last staged asset", _stageProgress.Current.Value);
+                if (_stageCancellation != null && GUILayout.Button("Cancel staging"))
+                    _stageCancellation.Cancel();
+            }
             _tab = GUILayout.Toolbar(_tab, Tabs);
             switch (_tab)
             {
@@ -147,6 +162,22 @@ namespace Lore.Unity.UI.Main
             EditorGUILayout.LabelField("Generation", snapshot.Generation.ToString());
             EditorGUILayout.LabelField("Last refresh (UTC)", snapshot.RefreshedUtc.ToString("u"));
             if (!_busy && GUILayout.Button("Refresh")) Schedule(() => RunRefreshAsync());
+            if (!_busy && GUILayout.Button("Select all listed changes") &&
+                EditorUtility.DisplayDialog("Select all Lore changes?",
+                    "Select every listed Asset/.meta pair and repository file (excluding parent directories), " +
+                    "including generated files outside Assets? " +
+                    "Review the selection before staging.", "Select all", "Cancel"))
+            {
+                var directories = new HashSet<RepositoryPath>();
+                foreach (var entry in snapshot.Entries)
+                    for (var slash = entry.Path.Value.IndexOf('/'); slash >= 0;
+                         slash = entry.Path.Value.IndexOf('/', slash + 1))
+                        directories.Add(new RepositoryPath(entry.Path.Value.Substring(0, slash)));
+                foreach (var asset in index.Assets)
+                    if (!directories.Contains(Key(asset))) _selected.Add(Key(asset));
+                foreach (var file in index.RepositoryFiles)
+                    if (!directories.Contains(file.Path)) _selected.Add(file.Path);
+            }
             var total = index.Assets.Count + index.RepositoryFiles.Count;
             var first = _page * 200;
             EditorGUILayout.BeginHorizontal();
@@ -227,18 +258,53 @@ namespace Lore.Unity.UI.Main
             }
             _message = EditorGUILayout.TextField("Message", _message);
             _pushAfterCommit = EditorGUILayout.Toggle("Push after Check In", _pushAfterCommit);
-            EditorGUI.BeginDisabledGroup(_busy || _selected.Count == 0 || string.IsNullOrWhiteSpace(_message));
-            if (GUILayout.Button("Check In"))
+            var ready = SelectedStaged(snapshot);
+            if (_selected.Count > 0 && ready)
+                EditorGUILayout.HelpBox("Selected changes are staged. Review them, then Check In when ready.",
+                    MessageType.Info);
+            EditorGUI.BeginDisabledGroup(_busy || _selected.Count == 0 || ready);
+            if (GUILayout.Button("Stage selected changes"))
+            {
+                var paths = new List<RepositoryPath>(_selected);
+                if (EditorUtility.DisplayDialog("Stage selected changes?",
+                    "Stage the selected Asset/.meta pairs in bounded batches? This does not create a revision or push. " +
+                    "If interrupted, some files may remain staged; refresh and inspect before retrying.",
+                    "Stage", "Cancel"))
+                    Schedule(() => RunStageAsync(paths));
+            }
+            EditorGUI.EndDisabledGroup();
+            EditorGUI.BeginDisabledGroup(_busy || _selected.Count == 0 || !ready || string.IsNullOrWhiteSpace(_message));
+            if (GUILayout.Button("Check In staged selection"))
             {
                 var paths = new List<RepositoryPath>(_selected);
                 var message = _message;
                 var push = _pushAfterCommit;
-                if (EditorUtility.DisplayDialog("Enable Lore editing and Check In?",
-                    "Stage the selected Asset/.meta pairs and create a Lore revision? Unsaved Unity edits are never discarded.",
+                if (EditorUtility.DisplayDialog("Check In staged selection?",
+                    "Create one Lore revision from the staged selection" +
+                    (push ? " and push it to the remote" : " without pushing") +
+                    "? Lore state is rechecked before Commit. Unsaved Unity edits are never discarded.",
                     "Check In", "Cancel"))
                     Schedule(() => RunCheckInAsync(paths, message, push));
             }
             EditorGUI.EndDisabledGroup();
+        }
+
+        private bool SelectedStaged(Lore.Unity.Application.Status.StatusSnapshot snapshot)
+        {
+            if (_selected.Count == 0) return false;
+            var prefix = _controller.AssetRootPrefix;
+            if (prefix == null) return false;
+            var selected = new HashSet<RepositoryPath>();
+            foreach (var path in _selected) selected.Add(StageSelectionService.Logical(path, prefix));
+            var found = new HashSet<RepositoryPath>();
+            foreach (var entry in snapshot.Entries)
+            {
+                var logical = StageSelectionService.Logical(entry.Path, prefix);
+                if (!selected.Contains(logical)) continue;
+                if (entry.Status.Stage != StageState.Staged) return false;
+                found.Add(logical);
+            }
+            return found.SetEquals(selected);
         }
 
         private void DrawHistory()
@@ -372,6 +438,32 @@ namespace Lore.Unity.UI.Main
             _notice = result.IsSuccess ? "Status refreshed." : result.Error.Message;
         });
 
+        private async Task RunStageAsync(IReadOnlyList<RepositoryPath> paths) => await RunAsync(async token =>
+        {
+            _stageProgress = new StageSelectionProgress(0, paths.Count, default);
+            _staging = true;
+            _stageCancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
+            var progress = new Progress<StageSelectionProgress>(value =>
+            {
+                if (this == null || !_staging || _lifetime == null || _lifetime.IsCancellationRequested) return;
+                _stageProgress = value;
+                Repaint();
+            });
+            try
+            {
+                var result = await _controller.StageSelectionAsync(paths, progress, _stageCancellation.Token);
+                _notice = result.IsSuccess ? "Selected changes staged. Review Changes before Check In." :
+                    result.Error.Message + " Refresh Lore status and inspect partial stage before retrying.";
+            }
+            finally
+            {
+                _staging = false;
+                _stageCancellation.Dispose();
+                _stageCancellation = null;
+                _stageProgress = null;
+            }
+        });
+
         private async Task RunInitializeRepositoryAsync() => await RunAsync(async token =>
         {
             var result = await _controller.InitializeRepositoryAsync(token);
@@ -396,7 +488,7 @@ namespace Lore.Unity.UI.Main
         private async Task RunCheckInAsync(IReadOnlyList<RepositoryPath> paths, string message, bool push) =>
             await RunAsync(async token =>
             {
-                var result = await _controller.CheckInAsync(paths, message, push, token);
+                var result = await _controller.CommitStagedAsync(paths, message, push, token);
                 if (result.IsFailure) { _notice = result.Error.Message; return; }
                 var outcome = result.Value;
                 _notice = outcome.IsCommitted

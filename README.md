@@ -34,6 +34,18 @@ project root after confirmation. Existing project files are not staged or
 pushed. If `.lore` already exists but cannot be verified, initialization is
 not offered; inspect or repair the existing working copy instead.
 
+For a separate Lore Server, including disposable Docker, WSL2, and VM setups,
+see [Lore Server test setup](docs/Lore_Server_Test_Setup.md). The plugin's
+offline-initialized working copy does not gain a remote by starting a server.
+
+In **Changes**, select the files to include (or confirm **Select all listed
+changes**), then choose **Stage selected changes**. Assets and their `.meta`
+files are staged together in bounded batches with progress shown in the Lore
+window. Staging does not create a revision. Once all selected changes are
+staged, review them and use **Check In staged selection** to create one revision.
+Push after Check In is off by default. If staging is interrupted, refresh
+Changes and inspect any partial stage before resuming with the same selection.
+
 ## Conflict resolution (experimental)
 
 Open **Window > Lore > Lore**, select a conflicted file in Changes, and inspect its

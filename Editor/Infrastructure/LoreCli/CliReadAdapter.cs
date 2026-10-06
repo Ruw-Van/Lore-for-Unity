@@ -72,7 +72,7 @@ namespace Lore.Unity.Infrastructure.LoreCli
                     args.Add(path.Value);
                 }
             }
-            var output = await _runner.RunAsync(root, args, token);
+            var output = await _runner.RunAsync(root, args, token, LoreCliRunner.MaxStatusChars);
             if (output.IsFailure) return Result<IReadOnlyList<FileStatusEntry>>.Failure(output.Error);
             if (output.Value.ExitCode != 0) return Failure("Lore CLI status failed.");
             var parsed = _parser.Parse(root, output.Value.StandardOutput);

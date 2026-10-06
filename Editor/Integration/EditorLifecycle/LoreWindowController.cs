@@ -37,6 +37,7 @@ namespace Lore.Unity.Integration.EditorLifecycle
         public string RequiredVersion => LoreBootstrap.RequiredVersion;
         public bool ReadAvailable => LoreBootstrap.Queries != null;
         public bool WriteEnabled => LoreBootstrap.Writes != null;
+        public string AssetRootPrefix => LoreBootstrap.AssetRootPrefix;
         public Result<ValidatedRuntimeArtifact> RuntimeArtifact => LoreBootstrap.RuntimeArtifact;
         public Task<Result> InstallRuntimeOfficialAsync(CancellationToken token,
             IProgress<RuntimeInstallProgress> progress = null) =>
@@ -220,6 +221,51 @@ namespace Lore.Unity.Integration.EditorLifecycle
             var writes = await LoreBootstrap.EnableEditingAsync(token);
             if (writes.IsFailure) return Result<CheckInOutcome>.Failure(writes.Error);
             var outcome = await writes.Value.CheckIn.ExecuteAsync(plan, token);
+            if (outcome.IsCommitted && !token.IsCancellationRequested)
+                await RefreshAfterWriteAsync(token);
+            return Result<CheckInOutcome>.Success(outcome);
+        }
+
+        public async Task<Result> StageSelectionAsync(IReadOnlyList<RepositoryPath> paths,
+            IProgress<StageSelectionProgress> progress, CancellationToken token)
+        {
+            var repository = Repository;
+            var prefix = LoreBootstrap.AssetRootPrefix;
+            if (repository == null || prefix == null) return Result.Failure(Unavailable());
+            var writes = await LoreBootstrap.EnableEditingAsync(token);
+            if (writes.IsFailure) return Result.Failure(writes.Error);
+            Result staged;
+            try
+            {
+                staged = await writes.Value.StageSelection.StageAsync(repository, paths, prefix, progress, token);
+            }
+            finally
+            {
+                // A cancelled or failed batch may already have changed Lore's stage.
+                // The UI must never continue to display its former snapshot as current.
+                if (!token.IsCancellationRequested) await RefreshAfterWriteAsync(token);
+            }
+            if (staged.IsSuccess && LastRefreshError != null)
+                return Result.Failure(new LoreError(ErrorCode.ValidationFailed,
+                    "Stage finished, but Lore status could not be refreshed: " + LastRefreshError.Message));
+            return staged;
+        }
+
+        public async Task<Result<CheckInOutcome>> CommitStagedAsync(IReadOnlyList<RepositoryPath> paths,
+            string message, bool push, CancellationToken token)
+        {
+            var repository = Repository;
+            var prefix = LoreBootstrap.AssetRootPrefix;
+            if (repository == null || prefix == null)
+                return Result<CheckInOutcome>.Failure(Unavailable());
+            CheckInPlan plan;
+            try { plan = new CheckInPlan(repository, paths, message, push, prefix); }
+            catch (ArgumentException)
+            { return Result<CheckInOutcome>.Failure(new LoreError(ErrorCode.ValidationFailed,
+                "Select staged files and enter a Check In message.")); }
+            var writes = await LoreBootstrap.EnableEditingAsync(token);
+            if (writes.IsFailure) return Result<CheckInOutcome>.Failure(writes.Error);
+            var outcome = await writes.Value.CheckIn.CommitStagedAsync(plan, token);
             if (outcome.IsCommitted && !token.IsCancellationRequested)
                 await RefreshAfterWriteAsync(token);
             return Result<CheckInOutcome>.Success(outcome);

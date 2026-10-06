@@ -115,6 +115,35 @@ namespace Lore.Unity.Tests.Infrastructure
         }
 
         [Test]
+        public void CliOutputLimitRemainsBoundedForStatusScans()
+        {
+            var missing = new AbsolutePath(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "lore.exe"));
+            var runner = new LoreCliRunner(missing);
+            Assert.Throws<ArgumentOutOfRangeException>(() => runner.RunAsync(new AbsolutePath(Path.GetTempPath()),
+                new[] { "--json", "--offline", "status", "--scan" }, CancellationToken.None,
+                LoreCliRunner.MaxStatusChars + 1));
+            var allowed = runner.RunAsync(new AbsolutePath(Path.GetTempPath()),
+                new[] { "--json", "--offline", "status", "--scan" }, CancellationToken.None,
+                LoreCliRunner.MaxStatusChars).GetAwaiter().GetResult();
+            Assert.That(allowed.Error.Code, Is.EqualTo(ErrorCode.RuntimeMissing));
+        }
+
+        [Test]
+        public void CliParserAcceptsFullStatusLargerThanOneMiB()
+        {
+            var output = new System.Text.StringBuilder(RevisionJson()).Append('\n');
+            for (var i = 0; i < 7500; i++)
+                output.Append("{\"tagName\":\"repositoryStatusFile\",\"data\":{\"path\":\"Assets/File")
+                    .Append(i).Append(".asset\",\"action\":\"add\",\"flagDirty\":true,")
+                    .Append("\"flagStaged\":false,\"flagConflict\":false,\"flagConflictUnresolved\":false}}\n");
+            output.Append(CompleteJson());
+            Assert.That(output.Length > 1024 * 1024, Is.True);
+            var parsed = new CliStatusParser().Parse(new AbsolutePath(Path.GetTempPath()), output.ToString());
+            Assert.That(parsed.IsSuccess, Is.True);
+            Assert.That(parsed.Value.Files.Count, Is.EqualTo(7500));
+        }
+
+        [Test]
         public void CliParserReadsStructuredStatusWithoutInventingLockState()
         {
             var text = RevisionJson() + "\n" +

@@ -34,6 +34,7 @@ namespace Lore.Unity.Tests.Application
             public bool CommitCancelled;
             public bool CommitFailed;
             public bool UnrelatedStaged;
+            public bool ParentStaged;
             public bool MetaChanged;
             public bool MetaOnly;
             public string Prefix = "Assets/";
@@ -56,6 +57,10 @@ namespace Lore.Unity.Tests.Application
                 if (UnrelatedStaged && paths.Count == 0)
                     entries.Add(new FileStatusEntry(new RepositoryPath("Assets/other.txt"),
                         new FileStatus(WorkingState.Modified, StageState.Staged,
+                            LockState.Unknown, ConflictState.None, RemoteState.Unknown)));
+                if (ParentStaged && paths.Count == 0)
+                    entries.Add(new FileStatusEntry(new RepositoryPath("Assets"),
+                        new FileStatus(WorkingState.Added, StageState.Staged,
                             LockState.Unknown, ConflictState.None, RemoteState.Unknown)));
                 return Task.FromResult(Result<IReadOnlyList<FileStatusEntry>>.Success(entries));
             }
@@ -187,6 +192,32 @@ namespace Lore.Unity.Tests.Application
             var result = Service(fake).ExecuteAsync(plan, CancellationToken.None).GetAwaiter().GetResult();
             Assert.That(result.IsCommitted, Is.True);
             Assert.That(fake.StagedPaths.Count, Is.EqualTo(2));
+        }
+
+        [Test]
+        public void StagedSelectionCommitsOnceWithoutRestaging()
+        {
+            var fake = new Fake { Staged = true, MetaChanged = true, ParentStaged = true };
+            var plan = new CheckInPlan(new RepositoryId("repo"),
+                new[] { new RepositoryPath("Assets/a.txt") }, "Message", false);
+            var outcome = Service(fake).CommitStagedAsync(plan, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.That(outcome.IsCommitted, Is.True);
+            Assert.That(fake.Commits, Is.EqualTo(1));
+            Assert.That(fake.StagedPaths, Is.EqualTo(null));
+        }
+
+        [Test]
+        public void CommitStagedRejectsUnstagedOrUnrelatedChanges()
+        {
+            var plan = new CheckInPlan(new RepositoryId("repo"),
+                new[] { new RepositoryPath("Assets/a.txt") }, "Message", false);
+            var unstaged = new Fake();
+            Assert.That(Service(unstaged).CommitStagedAsync(plan, CancellationToken.None)
+                .GetAwaiter().GetResult().IsCommitted, Is.False);
+            var unrelated = new Fake { Staged = true, UnrelatedStaged = true };
+            Assert.That(Service(unrelated).CommitStagedAsync(plan, CancellationToken.None)
+                .GetAwaiter().GetResult().IsCommitted, Is.False);
+            Assert.That(unrelated.Commits, Is.EqualTo(0));
         }
     }
 }
